@@ -1,0 +1,2190 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoFEM Web Solver v2.7 — Καθιζήσεις κυκλικών και απειρομήκων θεμελίων</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        input[type="number"]::-webkit-inner-spin-button, 
+        input[type="number"]::-webkit-outer-spin-button { opacity: 1; }
+        .plot-area { cursor: crosshair; pointer-events: all; }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden bg-slate-50 text-slate-800 font-sans p-3 flex flex-col gap-3 relative">
+
+    <!-- Global Crosshair Line & Tooltip -->
+    <div id="global-cursor-line" class="absolute left-0 w-full border-t border-red-500 border-dashed pointer-events-none hidden z-40" style="height: 1px;"></div>
+    <div id="global-chart-tooltip" class="absolute bg-slate-800 text-white text-sm p-3 rounded-lg shadow-2xl pointer-events-none hidden z-50 whitespace-nowrap border border-slate-600"></div>
+
+    <!-- Toast Notification -->
+    <div id="toast-msg" class="fixed bottom-6 right-6 bg-emerald-600 text-white px-6 py-4 rounded-xl shadow-2xl transition-all duration-300 translate-y-20 opacity-0 z-[100] font-bold flex items-center gap-3">
+        <i class="ph-bold ph-check-circle text-2xl"></i> <span id="toast-text"></span>
+    </div>
+
+    <!-- Modal Heatmap -->
+    <div id="heatmap-modal" class="fixed inset-0 bg-slate-900/80 z-50 hidden items-center justify-center p-6">
+        <div class="bg-slate-50 rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col max-h-[95vh]">
+            <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-white rounded-t-2xl">
+                <h3 class="font-bold text-lg text-slate-800 flex items-center gap-2">
+                    <i class="ph-fill ph-map-trifold text-blue-600 text-xl"></i>
+                    Heatmap Πεπερασμένων Στοιχείων (FEM)
+                </h3>
+                <button onclick="closeHeatmap()" class="text-slate-400 hover:text-red-500 transition-colors p-1 text-2xl leading-none">&times;</button>
+            </div>
+            <div class="p-6 flex flex-col items-center flex-1 overflow-y-auto relative custom-scroll">
+                <div class="flex flex-col sm:flex-row justify-between w-full max-w-[800px] gap-4 mb-3">
+                    <select id="hm-var-select" onchange="changeHmVar(this.value)" class="p-2.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 shadow-sm focus:ring-2 focus:ring-blue-500 outline-none w-full sm:w-auto">
+                        <option value="magU">Ολικές Μετακινήσεις |U|</option>
+                        <option value="epsY">Κατακόρυφη Παραμόρφωση εy</option>
+                        <option value="epsX">Οριζόντια Παραμόρφωση εx</option>
+                        <option value="gammaXY">Διατμητική Παραμόρφωση γxy</option>
+                        <option value="deformed">Παραμορφωμένο Πλέγμα</option>
+                    </select>
+                    <div class="flex gap-2 w-full sm:w-auto">
+                        <button onclick="openContactStressModal()" class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-amber-50 border border-amber-300 rounded-lg text-sm font-bold text-amber-700 hover:bg-amber-100 transition-colors shadow-sm">
+                            <i class="ph-bold ph-chart-line-up text-amber-600 text-lg"></i>
+                            <span class="hidden sm:inline">Διάγραμμα Τάσεων</span>
+                        </button>
+                        <button id="hm-zoom-btn" onclick="toggleHmZoom()" class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors shadow-sm">
+                            <i class="ph-bold ph-magnifying-glass-plus text-blue-600 text-lg"></i>
+                            <span id="hm-zoom-text">Εστίαση (Zoom)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-4 mb-4 w-full max-w-[800px] bg-slate-100 p-3 rounded-xl border border-slate-200 shadow-inner items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                            <input type="checkbox" id="hm-show-mesh" class="w-4 h-4 text-blue-600 rounded" onchange="state.hmShowMesh=this.checked; drawHeatmap();">
+                            Πλέγμα
+                        </label>
+                        <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                            <input type="checkbox" id="hm-show-load" class="w-4 h-4 text-red-600 rounded" onchange="state.hmShowLoad=this.checked; drawHeatmap();">
+                            Φορτίο
+                        </label>
+                        <input type="color" id="hm-mesh-color" class="w-7 h-7 p-0 border border-slate-300 rounded cursor-pointer" onchange="state.hmMeshColor=this.value; drawHeatmap();" title="Χρώμα Πλέγματος">
+                        <div class="flex items-center gap-1" title="Αδιαφάνεια Πλέγματος">
+                            <i class="ph-fill ph-drop text-slate-400"></i>
+                            <input type="range" id="hm-mesh-alpha" min="0" max="1" step="0.1" class="w-16" oninput="state.hmMeshAlpha=parseFloat(this.value); drawHeatmap();">
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <label class="text-sm font-bold text-slate-700 flex items-center gap-1">
+                            <i class="ph-bold ph-arrows-out text-blue-500"></i> Κλίμακα:
+                        </label>
+                        <input type="range" id="hm-def-scale" min="0.1" max="10.0" step="0.1" class="w-24" oninput="document.getElementById('hm-def-val').innerText=this.value+'x'; state.hmDefScale=parseFloat(this.value); drawHeatmap();">
+                        <span id="hm-def-val" class="font-bold text-slate-600 text-sm w-8"></span>
+                    </div>
+                </div>
+
+                <div class="relative w-full flex flex-col items-center" id="heatmap-container">
+                    <canvas id="heatmap-canvas" width="800" height="540" class="max-w-full h-auto cursor-crosshair rounded-xl border border-slate-300 shadow-md bg-white"></canvas>
+                    <div id="heatmap-tooltip" class="absolute bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl pointer-events-none z-10 hidden border border-slate-600">
+                        <div id="tt-val" class="font-bold border-b border-slate-600 mb-1 pb-1 text-emerald-400"></div>
+                        <div id="tt-r"></div>
+                        <div id="tt-z"></div>
+                        <div id="tt-p"></div>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col items-center mt-4 w-full max-w-[800px] px-10">
+                    <div class="flex justify-between w-full text-xs font-bold text-slate-500 mb-1">
+                        <span id="heatmap-min-label">0 mm</span>
+                        <span id="heatmap-mid-label"></span>
+                        <span id="heatmap-max-label">0 mm</span>
+                    </div>
+                    <div class="h-4 w-full rounded-md shadow-inner" style="background: linear-gradient(to right, rgb(0,0,255), rgb(0,255,255), rgb(0,255,0), rgb(255,255,0), rgb(255,0,0))"></div>
+                    <!-- Colour-scale limits: empty field = automatic (min/max of the results) -->
+                    <div class="flex flex-wrap items-center justify-center gap-3 mt-3 text-sm font-bold text-slate-700">
+                        <span class="flex items-center gap-1"><i class="ph-bold ph-palette text-blue-500"></i> Κλίμακα χρωμάτων:</span>
+                        <label class="flex items-center gap-1">Min
+                            <input type="number" step="any" id="hm-scale-min" class="w-24 p-1.5 bg-white border border-slate-300 rounded-lg text-sm font-normal" oninput="setHmScale('min', this.value)">
+                        </label>
+                        <label class="flex items-center gap-1">Max
+                            <input type="number" step="any" id="hm-scale-max" class="w-24 p-1.5 bg-white border border-slate-300 rounded-lg text-sm font-normal" oninput="setHmScale('max', this.value)">
+                        </label>
+                        <span id="hm-scale-unit" class="text-slate-500 font-normal">mm</span>
+                        <button onclick="resetHmScale()" class="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors shadow-sm">Αυτόματη</button>
+                    </div>
+                    <div id="hm-scale-note" class="text-xs text-slate-500 mt-1 h-4"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals (Tables, Params, etc.) -->
+    <div id="contact-stress-modal" class="fixed inset-0 bg-slate-900/80 z-[60] hidden items-center justify-center p-6"><div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh]"><div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl"><h3 class="font-bold text-lg text-slate-800"><i class="ph-fill ph-chart-line-up text-amber-500 mr-2"></i> Τάσεις Επαφής (p) κάτω από την Πλάκα</h3><button onclick="closeContactStressModal()" class="text-slate-400 hover:text-red-500 transition-colors p-1 text-2xl leading-none">&times;</button></div><div class="p-6 overflow-auto custom-scroll"><div id="contact-stress-chart" class="w-full h-[400px] relative"></div></div></div></div>
+    <div id="table-modal" class="fixed inset-0 bg-slate-900/80 z-50 hidden items-center justify-center p-6"><div class="bg-white rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col max-h-[90vh]"><div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl"><h3 class="font-bold text-lg text-slate-800"><i class="ph-fill ph-table text-blue-500 mr-2"></i> Πίνακας Αποτελεσμάτων</h3><div class="flex gap-3"><button onclick="copyTableToClipboard()" class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 flex items-center gap-2"><i class="ph-bold ph-copy"></i> Αντιγραφή (TSV)</button><button onclick="closeTableModal()" class="text-slate-400 hover:text-red-500 transition-colors p-1 text-2xl leading-none">&times;</button></div></div><div class="p-6 overflow-auto custom-scroll" id="table-modal-content"></div></div></div>
+    
+    <div id="parametric-modal" class="fixed inset-0 bg-slate-900/80 z-50 hidden items-center justify-center p-6">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col max-h-[90vh]">
+            <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-2xl">
+                <h3 class="font-bold text-lg text-slate-800"><i class="ph-fill ph-strategy text-purple-600 mr-2"></i> Παραμετρική Ανάλυση</h3>
+                <div class="flex gap-3">
+                    <button onclick="copyParametricTable()" class="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold border border-indigo-200 hover:bg-indigo-100 flex items-center gap-2"><i class="ph-bold ph-copy"></i> Αντιγραφή</button>
+                    <button onclick="closeParametricModal()" class="text-slate-400 hover:text-red-500 transition-colors p-1 text-2xl leading-none">&times;</button>
+                </div>
+            </div>
+            <div class="p-6 overflow-auto custom-scroll flex-1 flex flex-col lg:flex-row gap-4 items-stretch relative">
+                <div id="parametric-chart-container" class="flex-1 h-[500px] relative"></div>
+                <div id="parametric-profile-container" class="w-full lg:w-1/3 h-[500px] relative"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- HEADER (Fixed Height) -->
+    <header class="flex-shrink-0 flex flex-col lg:flex-row lg:items-center justify-between bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-md gap-3">
+        <div class="flex items-center gap-4 min-w-0">
+            <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAZABkAAD/7AARRHVja3kAAQAEAAAAZAAA/+4ADkFkb2JlAGTAAAAAAf/bAIQAAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAwMDAwMDAwMDAwEBAQEBAQECAQECAgIBAgIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD/8AAEQgAUgD6AwERAAIRAQMRAf/EAOYAAAEFAQEBAQEBAAAAAAAAAAAGBwgJCgUEAwsBAgEAAQQDAQEAAAAAAAAAAAAAAAQFBgcCAwgBCRAAAAcAAQMDAgEGBwkJEQAAAQIDBAUGBwgAERITFAkhFSIxMzUWFwphMiM0Njc5QVFiY1ZXGDh4UrJUtFW1d7g6cYGRwVNkdEVlJka21pdYGXkRAAIBAwMCAwUCBgkLEQkAAAECAxEEBQAhEjEGQRMHUWEiMhRxI4GRQlIzFaHBYnJDNDUWCLGCklNzsyR0dTY38NHh8bLCY4OTo0RUtCVFVRei0sOElLUmdjj/2gAMAwEAAhEDEQA/AN/HRo0dGjUUeUvNXjvw9qitm2u/RcE4Okc0TWG6xHlonF/DySQjodExnR/VHt2MJQAQ7iUDCHbqIdxd6Ynt5/ozzusyy1W2hAaUjwZ6kJDH/wAJKyKd+PI7anHZnp53T33di2wNszQA/FKwIjT21bxI9gr76ddZpOQP7xRtl0cy8dxUyKLrNdY+sVS63kSPnaLYTkSI7WbKHQjmJfJQvYVlG5wEwdy9+q7vO6O7siw+quoMTbv8sVuonuCPYZpVKV/udvt4MeuuoML/AEbMBiEV+6Lh7q8P5CEolfYAvxH8ZGqur98ofyYXKMdWqT5Fz8FDhHQk4ijVWSDBmdjPzCkM2TZCMe+S9wykEhK4RFYp0hEA+oj2BuW0sbu5FtfXmUurgu6nzLyZQGReZ+COSJQCN1ISh92pevp32Vjj5FnjrYSAkVZFY1AruWqdx0Pjris/kG+TalzKItOVFrdvV7rG0qLI/dx71hMPJNkMjHyzYTw6P/u64aqEEHBhIIicQ8e5FPH22tMCU862lycLLbtKxS8ugyhTxKn78jmDX4aEbe8VZL3tLtuZOJsLUrxrQxJt4ezrqY2HfvDnN/NCsXOyUuq7NTO4KryabI9bmlo8j4Y1WRauUzrleNTvSCkmucUW5lw8PLy+nUitz3DYyeXh8y8zqf0N9Gk6k05cfNiEMytx33aQgfFxI1Xea9M+1roEpbNbyfnQsVp/WNyQ/YAv2jWkPhN8xXEXmiLOuQ1n/ZtqKyJTLZ5elkI2QWVACFU+0vVDEaSSYKGHsYhhJ27ABzD9OpHZd8rbzJZd2W5xty7BUl5+ZZyseipcAL5bt4RzpEx6KXOqcz/pxlsUrXOOb6yyXc8VIlUe1o6kkDxZCw8SFGrX+p9qutHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNU5/Kd8ptZ4Q1hLPc9SaXPkbc2gp1utJj7tGroOuyKE7ON0AUVE4qKF9u38ROscSgAD3+lYd4d4XMVy/bvbrqmQRQbm5IDLaqwqFUH4XuHX4lVvhjWkkgIKI99ejfo3c9/XP64zHKDtWBviboZSOqqfBR+U3+ydYmdLuWn7Pc5bV9nuKl8v037ybipKwSSElUVpCDcqvLLnsmRZZNtByTdiUDpMwVTTV7FIJ1DLpqBWtuttaK0NoJPjeszsWNw5k2W4LmrSVOxY1p4BQpXXfeMssVhLFMRhIBb42IBCqLxcKwokq0FWUnq1CRuaDiRoombaBtN/GIwHPbfrM7MRchES0HBwMoNfYoTkClEmi0HCzsXiDeNOqqdNR2ugICmiUhTET8z5NcxWcMdtkHEc5kUxKv3k8jK/KqxxqSxbYEIrdSSQTQaspe43E4wz9xXEFnbxsGDu6hjxYtyO1KtsDxB6mtCaCwWl/C/zkscexZ2ydyTKCJwhIX7NZ7dEO7KnFBNjZyMJGFjUVJAFEpw3uAEwiYpigUDeAdulP19wZi0ONnMpfn9/NBbnlw8uojeUzLVNqGIfZXfVOZb1a7Bjdmszc3QLV5RwyFCacahyOPy7bHSrtHwpc2YL2j+v7PiF2fxr1GSj41/ayQQg/bpyINTsEbQ0BuYyIzDr0kylKQh1jCUvfsPW36uWFWjuMWAjrxJhurYsQeJO0kkDNXitaVJoBqMD1N7QvKho7uEEdTC7D8JjDU6DVZ/ITjFyt4wtF4zbMUnqig5qTKiN717RxL1xxUWEmhJt2zGXjlXEMiZZRqkn7pUEzHQL4gAHMY4vFhksVdX62zSSwX3nGcW86GGRnKlSyhwPNUAk/dM613rQAacYLzEZqIz4m4injrvxYEg+xh1B9xFdRyhoWJj4BG0R87IRU/XW5rSvdYN87amrEy4XFlSqVHIk9ms6ssq7ZKunCySyQs24+ZTKEQVKd7nuZbm4awniSS0mPleTIoIlQCs0rVqBGoIUKQebbEAspDJeWPGrrUODUEdQfCmtSnw8/NlY1pur8VuZ0wr7qVTZMcu1udTMwXdg4T7RkJZzLJIkOZ2n4g1dABU1y/xexgAimqyyEnZJBWRrjsjlxarGR8ea0qG+JntAaB1Yl7X5gTCCEp/vLsePLK+QxiCPNAElAKLceJoNgs3iKbSdD8ZqddCaiaqZFUjkUSUIVRNRMwHTUTOAGIchyiJTEMUe4CH0EOrZVldQ6EFCKgjcEHoQfEHVCMpUlWBDA0IPhr/fWWvNed24Bo1cuhRcOAbN1nAt2iQrulwRTMp6LZAogZZwr4+JCB9TGEA68JoK6yRebhKgVIFTsBXxJ8B7dQ4pnOvINFG2lotO5BWo1Cus7nF0CH496u4/Vm+1j2v6w1KUMatEInMw4PURWIQTkAFSiBhAwD03R5S3m5eUszcGKtSNtmHUHbqNTq/9O85ixAcjPjIRc26Txcr23HmQyV4SL958rUNCadDttpT55zByjTNglsGgYjVo7Ua9WYu52Wu23JL7Ty1uqzqkmhATk1KWGFYRTRnPPIdygzAFjKLrIHKUv4TCGyHIQTXBtUEgnCgkFGFAa0JJFN6GmkeT7HzOJwadx3L2b4iWZoo3juYZecicS6KqOWJQMpbagBBrvpydY3jLMRdZgy0u0N6482TT67judNlW7pypYL/aUny8PDpg1RVK0TVQjVjHcLCmgn2KUxwMchTbri6gtSgnbiZHCL72PQfsaasN27mO4Eu5MTCZUsbR7mcggcIYyAzbkVoWFFFWO5AoCR0dh1qr4dn1g0+6s7U5qNTYu5eyuahU526SMNBxzF1JSk66g62zkJg8TFMmZ1HKqSKnpEDyEO3cQ9uLhLWEzy8vLUVNATQDqaDeg8da8HhbzuHJxYjHtCL2ZgsYkkSJWdiFVA8hVeTEgKCRU6+ud63Qdcyys7PmE6je89udWRuFVmq4mo9NOxDhqd0kmyZCVN0EoB0zIKM1CpuEXZDIKEIqUxQ9huIriBbmA8oWWoI8R/r+727axymFyWEzE2By8ZtsnBMYpEfbgwNDU9OPiGFVK0YEgg6jRL/IPx8r+WXjap5vrkNmma3h5nF7skji+jti1q4Rk8eqS0W/izQH3k6URayljHLpFuo0SeqkTFT69wRNl7RIGuX8wQo3FiUbY1oRSldjt7K6lkHpn3Nc5m3wFsbKTLXduJ4UW6gPmRMnmKwbnxq0f3iqSGKgmmnBU5YURrP1+rylG3WEnLclYP1TaTWI6HGo2SQrNck7bJwEVJOIUsUexnrsM7dNmCi6Tl2RsqCJTmIYA2/XxBwjJKGatKo29ATQGlK0BIHjTTYOzMi9tLeQ3GOkt4SnmFLuBjGsjrGrsoflw5sqs4BVSw5EV0jc75249rdTYXzMafyCvFMlHUuyjrLA8edZXi3juAl30BNtkFVqw3UMrFTkY4aLgJQ8F0Dk/KUetcOUt7iMSwLM0ZruI2psaHw8CKaXZP06zmFvWx2WnxlvfoFLRve2wYB1DoTSQ7MjKw9oIPjrr0fmrkWjSmuQVRgdjkZ/CgZJanBOMa0CKmKvJSUdHzUdBGYS0KyXlJ99ASaUgkzZA4WMzH1O31KBsoslbzNIsYkLxfMODAg9abjc0NaDw1oyPYWbxUNjcXslittka/TuLqFlkVWZGequQqB1KFm4jlt7dIN38k/FphhVN5LvpjRGmIaDbY6l0+/Ock0RGLl5mXcrx0Usoievg+h4OSmGx2KMi/SasVHhQSBXyMTy1HM2ItVvSX+mduIbg25Ow8NgTtU0FdOSelXeEncU/accdq3cFtA0ssIuYCyqoDMAedGdVIcohZwu9NjR0pnlrRK2tXi2ag7zW2Fjt1UpSE/OYnfY6sxUtc7DHVeEc2WwrxRYmtQhpeVQTVevVUWyXmHc3cQAd7X8SEB0lUFgKlGoCTQVPQCp6nTPB2XkbpZTaXOOlkigklKJdQtIyxI0jiNA3KR+KkhEBY06ab+Z+QfCa3R1NLscDt8JnoW9OkM7o8xDRFq5MTb67/s9rx4GUjoZ82mom3WdRBKKethUavSOkTlOBT/TS2WtUi89xKIeVOXBqE8uIoabgnoehqNOdv6Z9xXeQGJtZMfJk/I80xC7gDqgi85+as4KNHGCZEajIVYEba71m5vZZTHkwytVH36ANX87terzLiTwrQ2rVpQKO8gWNssCCykOH3gkCpZWh3TdgDp2gip6qiRU+xhzfJwRkiRZRRCxqjfKtKnpvSo6VOk1p6f5i/SOSzuMbIJbqO3ULdwEmaUOY0I5fDz8tgrPxUkUBJ09OYbVUdgyeH2misbe/pFkr5bVVjSFRm4Oes9ecxyctFSsJW5lqymXLafYLEUYeaKZnJTlEodjAIqYLmO4txcxBjEwqNiCR1BAO+46aYcvgL7B5qTA5FoFyEUvlycZEdI3DcWV5FJQFCCHoSFoa6Y2sc88FuOOaTvdcS1ORy3JJSyQ98sAZBoTdzDvaQtKN76CUA6gULBJoUJeGcEl1GzVYjMxBAwiIG8UqZW1ktnu08wwRkhjwbbjXltSp403p01Ibv057ksc7adt3Rs1zF6kbQp9TCQwlCmH4w5RTMGBjDMC1fs1J7PL9VNVoVL02iSqc7StBq0Dc6pMJJqokk69ZYxtLxDz27giTlsddi7IYySpSKpGESnKUwCALoZY54lniNY3UEH2gio1EcnjbzD5KfE5FDHf20zxSKaHi8bFWFRsaEHcEg9QaaaEnKjKXuy6Rgde/XK36dkVcgLPo8NU6PZJphVWVrhnk7VWMjYUWJYD79Y45goZnHkcndqj2/kwAQHpP9dAbl7ROTTxqCwCk0qKip6VIGw66ez2dmY8Fa9yXXkQYi9leOBpJUVpDGwSQqhPPgjMAzlQo9ukjQOc/HLRcttG1xlonoLLqnZnNKf2260e309CRujGwOak+p1Zip2HaWC1Wlta2oxYMI5o5cryJitkCKrGAnWuHKWc0DXKsRArcaspHxVpQAipNdqAVrsN9Lsn6ed04vMQ4CaGOTLzQiURxSxSlYigkEsjIxSOMxnzObsqhKuxC76+1l5n5XnxIaT1uuaxjVMn5ONho7SdPziaruetpOadpMYZrarEl9wJnYSrxwmiirZE4hH1jlSMcqhgIPr5GCGjXAkjjJpyZSFqelT+TX91TWNp2HmMmZIcLLZX9/GjM0FvOjzFVFWMaHj5/EAkiAyGgJAIFdSt98y/4Y1/mvvv5wl/Mv8Ahn8f+a/4z+J/D0uqPbqG+XJ+aetOnj7Pt92ovc0uUVV4fcdtB26zqpHVr0UqhWoo5yAtOWh6QyELGoJmHuqKrsxRMAB9QDt3DuHUT7z7hk7fxHOzCtmLlxDbKehlcE82H5kShpZP3KEVqRqZ+nvZt3313VbYC2BETtylb8yJfmNfDbYe818NfnZXXQ7DyB0G97JsNhfOrjoMk6k21r+4C6h63Ig4eHYQcs4ZC6kaomU6aRGTg6KhfSKcfREVxXRpVYXx0S21sTM4YvMX/Szs5DSS70EjMSS4BFDQAgKEP1AssdbdvY63wuFiVbG2QL5dKMy0ALKDQSbV5Co3p8Xw8Wm3wH4EXLndcZG2215L1bj3XZuKZ26yRLBdvP6zbmvum8bFQEMVz7OQvEq2UUK6cpemVIPVVOZMQdOCeIlw9wMVigBdqBzkK+YLZZfkiiXYyzSFT5EBYKFUyyssKbwP1F9Rcf6d2C21sqTdxSoxijZhxgj2LM70qsKGlAak/CqhiUU7OcX4zZHxyz1nVKtToul1VgyKT9S6cuk3K4MUOwn0C3MxbTtxl3JgAV0wMlFgoIlBusIesef47tvFdu2r3d6He4dfvKSBnc+y5uBR5DXbykCWyfKkJA5HhLP93Z7u7KG6up2numbaWQGg/uERqkSjwbeUjcuvyjr2LWQq0c4RiGdapFebG8Dg0RLFtkfIBFJRdVo3R8FRABEUkwE3buJ+xAN2Y8l3nd20bQY2O3tLIbEKOAHsLFQKfvRv+dtXWdl25HdSLJdvNc3Z9p5E+0AEmo9529m9NJus7xIzCR04ecjrq2V8k3wLm+4tAIf+OVRP+ImAdvwkAR7dvxCId+mux79zC/dxypeK3zcvjWnj02HuUE0/K0tvO07NPjmja2cdKfCf9f7T+LTkhn2f6/VpWGUhIOIUeJLIzVYUj283R5gihfBUZenOSoxZiLAfxO5aCzkCmEfB0H92bWmOwXeWNeBoYoLkGrRgc4SR+X5fwhT/AMJEY5lPyyjUdlyOW7cvkmEkksY+WSpWVfcsgqx/eOHjI6xnWTT5SPiBdYaW08hOLsHIQ8ZX0l5vTceYqGlU6/CuVBQcXzMHyjYHD2pkUWEFE/SI8iVTAUSpKegZzHJDfduXIxed5S4clVWV2LPAWYLH5sm3n20jEIs7ASRuVhugeaSPffZ3fFv3JGllfsv1rbRyAcRIQKlHXcJMAK8QSkigvGdmVc/0s4Y31+9m1nbx/ernIIK06EqraQfvqoWE8m0OweOx9udUHDdqig2SaJqKJlKR8qun4Ckq+2wfHQrbKqrjLdCJWlKqsvPdyBv0JJYsQDvGFavJZRfWNSSa8vDW4P4IPkDkeUuFPcR1OWFztuEINod4s+VKElZagkPtIuYWIcwKKumpieguIAPZUhwDsUhenDs+7OHyL9oyMWxxiM9gx3+4qBLbVPU2zMpj8fIkQfwZOue/U3twW0y9w2y0SZ+E4A2EtCVkp4eaAeX7tSfytX49WTqpdHRo1Wb8bX6Q+Qj/APpRyT/5qzrpkwvW7/x2T/e6tn1V/Rds/wD6pY/7qfXiyb+1v5i/7IfE7/5027ot/wCX7j/F4v6r6zzX+hXBf5byP96tNMD8gkBc+T6nJGpZ7kmn3+SwbN4OAxK80YM1VgqZyjYSta3eTlXKtq0GrWJOQgm1apTAysayeqJoPpJuUTKHUR6SZZJL3zkijd2iQBGXjQS1Dk7sDtRBsD1Ye7Ul9M7mw7RGKvcne2ltFkbt3u4ZfPDy48rJZqo8uGROLmS6ejsoJSJjsA2plPNwh+SHxrWveYMU02en8QL7bl2yfkBYqZe5ZOhYoVQFOxyLwNgSdM1Sm+pVEDAP1DpxNyt5hmuk6PbsfsPE1H4DUagidvT9q+q0PblxUyWmbhjB/OUXCcG+x0KsPcdRCWbynxc2WO2Wqxrt78eGzqwEtudHg2bh2TiBp9kax6DjbqXENCrKI4ddZJUg2qMbk8IV8f7g2J6SiyPTfRsG4uYx/wB0SULqP4Jj+Wo/Mb8oeB+IeI1N1aH1etXwV46r6nWAdbSVyB+srdCxFpKx63cSj/B5GNZUHlOeQVtIzl2+i5X4pOeE1XXsbLRc3vmsTcPKRzxB7ESzaS5Xw7yPkmcgxMug7YP01CKEWSE4HIbyL3+nWvIkNgbpkIIMrEHwNZRTS7smOWH1k7cguldJo8bboysCGUrjmBUqaEEbihpvsdWhUdzyWktejWus07Jo/LWOcykvCydAn5q2uU9MJOwcc3CRcW6oVWShDJVN++KyFmVcrgizoHByCREp3uI3puALhYxAEJHEk/FUdagEbVpTrvXw1UWRTtSLCO+FnvWy7XSq6zIkY8jg7HiI5ZFf7wJz5U4kJxBqxEZ/h8/1DM6/6SeSX/WQ1fpD27/JSfv5P742pZ63/wCka6/xSx/7Db64nDv/AFnvlx/2hc5/6r+cdY43+PZD+7L/AHtdKO+P80eyv8mT/wD3CfXH+OKm5joXxB4ZS9ojK5MZNYcNtTDQ2NuUbIVs1TGxW1aZdS7x2oghGtY5okZx7v1EjMzJAuVRMyZTlxw0cE3b0UVyAbcxHlXpSprX2fb4ddb/AFTvstjPW7I3+BeWPNRZGMwmOpfzOEfEKBUsWPw8aHlXiQQaaez486lo0Fx0XpWjWF9pOTxFrnIjjRaNBi3bbSrRxpblafs4capGSyYgvKIN/VQjnCqaTp9BIsXLtBu5VVRIqxEcy2flTEvAGIjLD4jH+TyB8fYepWhIB0wep17i7nugX+LiW0zLwo1/HCwMEd8a+eLdl6KTQuoJVJjIiMyAMUF8taKDfhq2btUkUGqHIbiEi2QbkIkgiglyWysiKSCaYFTTRTTKAFKUAKBQAA+nWnuGn6t26edF/fF05eirM/fZZyS5xeSJJ6k/QXFSdS05btWp+L3JN4o3RM6b8d9uboOxRTM6Qbu87nFHaCC5i+omk5O0SMoUBApxSII9/EOzhkAPoZj4+S/+5OoX2U7ju/FICeByloSK7EidKEj2ipp7Kn26iVwqlOX6fDrikSv0bjU4gSccsULCuJXVNRYSriILnFcCOXlGLTHJJozk1WYEM4SRcLoprCYpFDkADCgxrZD9XQcFh4+SlKs1acR1+A76mnf0PZB75zJubjKi4/Wt1zC29uVDee/IKTdKSta8SVBIoSAdtRb4rP3zT4suYKtibxSMrI7XzvhpxlHLOH0IErZNvvkFIsWDh82Zu38SZ9JHSROuikqsiICdMhhEoILAkYK4505GWcH2buwP4NS/vGON/WDBi1LmFMfiGQtQPxS0hdSQCQGooJAJAPQnrp0eOOstuD8xyo4X2xq7kGGHGDbuH0AkdQJHQsI2+zrsqZktYOqkczqWz/cJVWnI9xMCbd9HfQEg7gos5xjGnxsnyxfHEPzkc7KPer/B+EaZ+6cM/qDBh+/LNlWTIf4Jk3/JhvLSMGW5k9izWii5PtZJfHX14M0R/l/Pvm5VLE9Qlb5PYXxB0TUJ9sJ/b2XTra53KQu0yzKoQh0ohOTcAyjUewA1i2jZAPokHRi4jBlrmNzWUxQsx9rHnyP2V2HsAA0eoWRjy/pt2/e2qlMdHkcnBboesdvGLQRKf3XEcnP5UjO3jquvifNiO6fGjTbccgZhJctflmtka2fKD9lkd0rOkaA0zw7tJQ3tlZyChpiRWiQMHmRy5OdP8YAIM9g3+FWUcn6A3F0fcXDNx/CATT3nVn952/8A+O92X1l/K6YTtyNiPnW0kghM9D14O6oJPDioB2OtIXIGn0/QMK2Sk6A0j3tItOYXmFtKEomiow+yPq1JIyC64OCmST9ogYVSqD2FI5AOAgJQEJldxxy2skU1PKZGB+yh1yx21fX2M7ischjWZchDeQvGVrXmsilQKe07U8Qaa/P7/btzc/yr0n+yz/Vf87Lf6sH+Wf5fzP8A7Q/Of4fVT/VZP85/4jTx/Rfnf7OvpV/Nz0//ALTa/wCePmdF/lD+1fb+46e7Vpv7x1yQXsWvZVxdj5kGFdq0UhdLmfusu1JJzaxUYs71u0Io5WTZNSisZMhTKeSBfEBN9OkHcs75bvG4mAL2+KgEEagjeedVmnYV2B8vyIwT0q48Tqmv6MeBjxmCuO55U5Xd05SPwPBKigJ6Vblv031R1Us/vu06VlXHqtWgtlmdFsdfrzJSuITsREBCOfbi3dOYkzONr80DVr6i6bxFJUfUbCRQ5j/UIeZYrSCXIw2x+pB4xxtxZ3nduCIGqzrzdlUqSNmqBTXRtzksbh8Zd9x3MflW1tE7tzKswYVrRqs616FSRsagU1vt415ZmHGXKqhUKy0bNK/RoFas0Js2I2FaRUQEGNmvJyKqJC6l7zNtFRTcm8jFiG7fsYvqr+pYPb0eN7Ux31N7IJL5uZVhQtLKxpNcAEjeZ1KReCWscSigLV+cXdmWzPembmvbgkzTyB5ia0QdYodgaLChFV8Zmc70WiR1xWeuEWZy0lJlmZi4VlTNIt+oV0uyKmp5vEnKHpqqOIg3ZygBzCmsYgplIYBKI113Zc5LM25lgllWVG8wKrdVFamuxPHqpJox+FRShL929FZ42YJKkbK44VZdg3sodqN0NBUVqT7GRkpg17QpLRdOIVnKvLvZS0Rr8hlohzHRMI5l3NvQjECkO8g0Itr90BIoj3WTFv5Cr2DpisL0Zr6VFSMzwszyq4qgEaM7ScBQsiqPN4itSoSvIgafntv1Ubh6uIJkVYmXZ6u4UR8jWjlj5VT4HlQLpaOWkfSdSk52Vla83iZuqoNYRWutWcapd5KHTQevPYQbaSkBbSBGVgYeIqKgY6Sgn7gVIwJyHMR2+IzMl7dywJZyQAI0SqvntGAzcYw7ENxljAqdwa7BTxabOSbJYdLW3jla5jnJcSFm8lXJUcnKrVapJ0GxFNywr78qNZpS9u740mGjFmyNMQb8gyBFzPJSPLBuPtake7TFAY6EYzBQbL+Q9lgOBvDsqBm7tJctPkj3NFOkcBLx8S1TWPgePFxQqquOLVpy5VpQ629w/QQ44YWSJnlIRwQtKK3McuS78mZDyWnSlK1FJ1WGEaaRUTETSYuJpm1XXiSyKKhm6wOmZ2j2GmQVKBnUFaGRlGb4nbxOgr5kD1E0jl6CuraDubDlCqPchDxDg0IZeLJJXrHMtUk8OJ5L8SqwqS1uJcLkakssBYBipFRQ1DpTo8ZoyHwIodiwOAT5GOLanFTmM/q+fOX1SyXfUG14paBIZvLqNUHzh0Etn7qLUIVJ8aOtRjR7hl5FbKqK+mqUyaYAFXY+VEsZrC9Vp58dQxGRyrm3kFYnd/CWFVeGR6chLA5UgtrsTtvJfzhwKX0vE3sZMctOnNerL+5daSL+5YaSvx47lLcSvkFw/QzOLFGQ+iTpate4m0GiGk6pB3iUWixczTGDOWPZEcyfpuWqQppGSSOIAUSeCh1t9emPDx5q38tp8POkytFzKNEg43Eas/xNW3eRWNSCwU9QQGnuPBJlsXc44iomiYD3OPijP4HA/BUa/R+TUIqmRVMxTpqEKomco9ynIcoGIYoh9BKYo9w6vBHWRBIhBRgCCOhB6HXGTKVYqwowNDryyThFpHP3bh+3i0GrJ04Xk3Z0U2sciigooo/cncnTbkbsyFFQ4qGKQClHyEA79ek0BJNBTrrOJWeVUVS7FgAorViT0FN6noKb6ra4un408bXewS7Xnfmelxm4albNrtCFn0DCo9s10m7jEp2GTgH9VcRCjaFcNYRFNKPVM4Ij2ExT9xN3ZrE2VkZGF1G6yyFzVkHxNSpFKbbdNWr3eO7O6ksYH7cu7SXH2cdrGY4btiYIuXBXEgarAuSXHEnoRSmuNBteOtc5N6tyji/kFzP9btZosJnErV3l1wFxUIar01axPaGlEJJum859wrclZnK6i671b3/mJFS+PgBMFFml7JfLdp5kiBSOUdABXjTxqCfbvrdcP3RddpWXZ83bN39FZXLzrIIrwStJKEE3I0KcZFjUAKg4UqprWrp4Pd+OGFZ7Yqn/AKamRXt9Zbvfb45vlo0HGGM45tWkWGStEy7ki12RiIeVMjPSygNCCgn6LJNBoHdNEnSi1ls7WIx/UxszMzciyVqxqehAO5291Bpo7jx/dPcOTivf1Be20cVvDCIY4booI4EWNAvNWZaoo5Gpq5Z+rHXIzbgSpmnHHXeM1b5C6ErnOuraMsmqvWM8NI5+x2GQnZTQ4fPTtq+jHRsFJr2V2ePQcoPAizqiZIxg7FDGHFeTZyWSTP5MnLwX4edSwXagBqaVrTw1uyvqOMt3TY923WMthlLEQDaSbjMbZUWBpquWZ1Ea8ypXzKb066mPUM+GIzNjml5mg1JilXVanMP7PAQbYtogFGZ4szGfhI5qlBOyOoo3oOSlQIi4ATCKYAYS9OMcPGEQynmKUNQNx03HTp11Br7J+flmy2Pj+jkMvmKI3c+W9eVUdiXFG3Xcldt9q6r7T+P3C7lxEu/B3HNsnaxhbXTru1t7CgPKXarJU3kne2OsjlJZ6XZWAK6alykg2IRJdE0kSPOkmsbyH1DNH6ptZMe2MtpStrzavGhIq3PjU1pQ099NWWfUvuKw72t/UHO4+ObuJrSIxmYSxpIFhNt9RwUpz81QxJB4c+RUU2Dm7bnVipebMLHtvOa3U3MqNZc/lrBY5Wj5FXY6UkGFvgW9OaXqZY1JDxrshdVY77ikh7Bs7S8kXJis1FyiouYXjh53N0ywqykkqg8RTkadOVK9K9DtXTRgMpa3+Va1wHb0E+WuIplRFluXZVMTmUwqZD8axc+BPNlNGQFwp0muH7vi1xLy0mOwfN7MNNqrWeslhr6tv0vE2s5FvbnZ5252dIXtUdwqEm2kLFYV1kSqoebcggmUwkAADXjzY4+D6dblHjBJFWSoqSx6U8T+DSvvdO8O9Mwc5cdv3dpeNHGjiKC6KMIo0ij2kDlSqIAaH4juRXSDzaAwDKrnyXvEJ8i2eObPygmmVluh5e2cd1WlbtUVX4imxMrUI9A7UGqbGow6TP2r4XySpylXU8lAN56oUtIJJ5UvE5zmrVMexAABH4BShr7dOWVue5MxYYnH3Ha90LTERmOLjHe1eNnaVlkY1rWVi3JOBA+EUFKcDNeFGc6XxJqHFrGOcGi2LFcS0EsaeyZ2jjc+7mn9bcR93ZZ3cp89JnafcoCBm5xF66ZlaGRcqem1e+qVFREcYcbDNj1sba5draJ+q8DWlG4k8SCATUim/Q9KaU5Xv7KYnvWfu/PdvWsWfyFty4Tm6QIHBiM8SeaksTuiFFblVRV4+JYNriXnJaZINZmk6X80GohBrLLQd4qMnpnD6nO5GNI4BtYKpKv4XNK9ZoQkk1Ksyde3cNnSZFDAUxDB36xlgjIMU2Rfj0YFohUeINFBFehpQ634/NX8TJf4nsOz+oADxSLBk5QrUqkiq87xvxNGXkrKSBUEalRvmSZVz5zKNzOi8lI5hQYGy0u2yX7D5XMro7Xmc9tEJb6UVeVdIWptFx0XPQLdQ6CaRBclKBDHAncplt3bwZWAQRTARBlJ4FTupBG+9BUfh1D+281mPTfLPlsjimbJSQyxr9Ws8QCzRvFLRQYyzMjsASTx6gV1IfUconNUw6143K6PLw76802SpFn0CFr9dLNuImfj14exLx0PINH9fjZCSinaqaZ/QVI2OfzIQRKAdLJ7dp7VrZnILKVLACtDsdum41GMRmbfD9ww52G1SSO3nWWOF3fgGRgyBmUh2VWAJFQWAoTpt6hFUbhlxsqub6DyJg67Vc7qEbntI1HXHtApq0XC16vM4GqtX51hr1an5WIaMUzCYUk1Hhg/GURERHTGsWOs1hlmAjRQqs/EbAUHsBI/Z06302Q777qmyuNxckt5dTtNLb2wmlDM7l5CKc5EViT4kL4HVf8AjGTcXrfjV/4jZH8jsReG+q6VYNTk2sLO4NJ6gpM3G6udEuDWux7aITK4gZ63KAuIFjHBm6HmgmoBDh4tNtb2Mlu+Pt7wMJHLmhQtUtyNNuhPuNOmrKz2a7vss7bd7ZvtZ7drO0S3Usl4tvwiiEERdi2zpHt+kXkaMRUb2IXDidnOkbBxz3vRRVs+q8bGVyb1awlYx0W1nHF1iGca9dT0W2ROioWJdsiv45Ehips34+sQPIAEHeSwhmuIbub4p4a0PSvIU3Hu6j2HVYWPeeUxWDynbeLpDhsq0RkSrMUETFgEYmvxA8HJ3ZPhO2o91mjZHCcuNj2au82qmtsWxQcBjM1mJpnF36UGrQ3dlRocFEVlE6dt/W6sy9kdgsk5XWVfKCKSqIdigRIkVumQkuEuV+pkAQrVNuNeIA61BJ+3Umu8jm7jsqxwN1gJhgrGR7pLjjdDmJhGZnaQ/d+XIsa0KgBBurda/Om/GRl0LiDvCbjo+jX6Fj9elt8zW+KfqvT9Wx3Yp22zN5k71nlzp8FFAwkf1mnV1UEnDVw3KgodsqRdscyXRFhYEtjayO7qJDIrbBkcksWUgDep/a3Gvb/1ay9x3AvcVja2ttO1itnPD95Lb3VqkawrDPFK7cl8tACQymoDqVccte7R4ijT8XM4NyY560qUq4M0YzSc/PK5Ljeg3atvG7d0rWtLmIudby0fX7RFLELIpwjCunkGS5kwUI3WOmf2ZYmU2t7dKUpRlqiMw9jGtaEdeIWo9x1rxc2Qtpo+4+0+27hLzkWgm43N1DE4JAkgVkKs8bD4DK84R1BoWUEPB+03gb/nJ4nf1Yfsz/pxkn9Tv+Q36V/q8/8AMP0f/gdKPOxf58H6Pj8y/J+b1+X3dNMn6p9Rv+qZr+N+f+iuf41/bfl/Tfu/n9+sNPykaSytHyTcnJefeAk3iJYlPhjOq0ytzNsWPZRvgm7hJN00QUbg2dOAA4CZRI5imIUTAAhRlpFPfW11fQgs9zlruRvjMbcVmkiQB1BOyxoKdCBQmmu1/ThDj+ycbZw9RbozUYqSWFSaj3mv9XT1fC5V2lw5xS91YliV0MjyC32GvuIeMew0YSeexhIeFfsomQWXcsFglXihzkEQD1RMYhSlEA6SXccsd1joDzE5nmn+NgzVggkaOrAANSUwkH3Cu41l6vZRouwGsWLUu7qGN6kE8C4LgkdRwFPs662nWyCbQjhlCt3ip2kTER0bGoO3KQmaso9qmikY5/HyBon6RRKkH4jHD6iYRAvUy7gsUsrlbVZGMUcKqgZh8KqNqn80UFF6kjcmoGuLMXdvcxtcMgEjyMzFQd2Y1P8AXH2+APh10z87NQcSqq0f2uEj3BG/3N6rLTDFi5SZkXSZlfKlfrgRJMVnZSesIeizBQvmb1VEwNDJ1LP5EUnKUsOR6tyPyjxHJhUjwjX4j8RWsmtYZ5VEqQSMleKhVJFepGw8KdOrkGnwhqINXCUXSys9Tbe2p17b2F2yr9tcqkeVNmyUrEDYiVVZAyaiJYV6u6cOSmEHCbhM67ZQhkVkhJ5YdkIkbXeMuEtM8Ll1WY7wgeTHJ5LAinAks1SGDDmjAq6kKZu6XqLXIwNc4owAvENpSfMkTzQevMAKtPhKkK6kMpBYW9ZTcaVqtLr76RhpywP4Q8KmNeZIVOqVgyLOYss+SoNnKbsCJxsPKkcnVWIoq6fPBOZPwIRIIj3J2jkrXO2mLuZYpbl0CHylEMMYUPNKsIIagVHDFmBZpHJ40AXUnw/cNheYW5vYEkitkfn94TLLJUpHGZSKVLMpUAEBUQANUltTJrMbGNfaqrIwMIlCQUHVkK5GCKzOGQdKoPo1OfUdO1H83aJZwsmKR1k2p35/FQUR7k72Ta2wdI2MCQWkMCRpGisUVAQQXJNZZCaUJC8yOTL01AbuWUlgrSSySyvIZG2ZyAQ3CgokaitaFuAqoYb6eCqzSsY/9FFwdFqsYxhamMVVZ04EDJGeKnV/kkgJ9O5gESgBfAhTdvrI8LkGs7jhG5WFj8pNSzdORJ2FPbWm3FQaaj+StRPDyZQZAPm6ADrxAG5+zrvUkV1nK/eLcyYvMjzvTWaKZ3tA2h2yQdEAQOpBaZWYmxKNwVA4KFQNbxdrh2H6CoP1AemPK+XZ94xmM1huoriOvt+GG6T7aO90R++Or19Dbp5zc42Svx2yNT2NE7xH/mxEPwaypWOfrjEtTeVUzBCUrstH2Z66jq2tEqPZ5RdCTe95N44PIGjq8syQas0lAUMsPrOTqAZQEy77W2u50uIb7kYJ42iAaQMAlCo+EDjycMWcilPhQCgqblubBwTyFN9t/wAX4+v7Gv1EMEsZ7fiGRWhQRMpO5vTJJUw9xE6rmvsDqnERABETqCI/9/qe9jXL3nZuLnk3lNjCG97KgUn8JB1wf3VbCz7lv7ZflS7lA+zmSP2Dp2DkIqQ6ahCqJqFMRRM5QOQ5DgJTkOQwCUxTFHsID9BDqVaYQSDUbEazWxWIY1I/vDOkVqSyfOJOtSPD9pcXlck6TW5CAWta/wCqEcvYxhXkatGhNLs0QIdyCQLG8jCJhE5hGGLa2x7udGjQobatCopXYVpSlddVzdwZ6L+jJa3cV7dJdrnDEHWV1cRjzWCcwwbgCaha06bbDV7f+ivxh/8Axxwb/wC0Gff/AE91KfobL+0xf2C/62udv5493f8AmuS/+pm/9/VE+cYzkUd+8N6hX43L8+jK/W+IcTZ4GvxtNrzCCibG5aUCPXnmEO1jko5rLqMpBdMXCaZVRKqb8X1HqLQ21uO75FCIEFuCBQUB+Hent9+uicrns3L/AEYrO5lvLl7mXNtG7tK5dkBmYIzFuRWoB4k02G22tKIAAAAAHYA+gAH5AD+8HUz1ynqPPK/aVePnHnUtXYMwlbNX66MfQYHx9Q9m021PWlSzKrpJAPkqexXycj2fYvcQKsI9vp0kv7n6S0ecbuB8I9rHZR+FiBqTdm4Edzdz2eGkbhaSy8pn/tcEYMk8n9ZCjt+DVI/xNQln4Q85eXPx26NalrQra63SOTWfWh8X2v62zcpBxLfT3zJuUARO5kH8wQp/EO4hBqmH6gbqM4BXxmUuMPM3LkFlUnxJA5fjr+wddAetFxaeoHp5hPVDFwiEQyy2E0Y38tFdjbqT7FVTT+6qPZq7fkpxvp3KWnVbNtIcLOc3jdJp9+u1MBsi4jdLjqQu6mYijWMVVCiSsurYlHPnqZSn92kw9qYPTXOISa8s476NYZv0IcMw8G47hT7q0J9tKeOqA7U7qvuz76bK4oAZV7SWGKWpDQNKArSpT+EEfNEP5JfmN1GoPfKZhWI1L43+Wa9VxzKqytD4/KKxC1fzyowysUqg9jQQVjVI6HbGYqodvwGSEgk/udumvO2ttHhrgxxotIzSigU+yg1YPo/3F3Be+qeFW8vryVXvl5B5pGDVDV5cmNa+NeulH8buEYfavj04jqWfGcosSkzgVCWmDzud1CWPLLOoVEzpaTM/h3Av1nRzCZUyvmZQwiJhERHrPC2ttJh7fnHG1YVrVQa7eO2kvqp3H3DZ+p2bFpf3sQjyUwXhPKvEBzQLRhQDwpSmpY8WuMNE4mUK0ZpmqTNhS5rV9J0yDgI6JShoypNdDsS9gLUYtog6dJmiq4C3tWpg9MAbpkKCZAKAdL7GyisImhhoIzIzAAUA5GtB7h0GoZ3h3bke9MjDlsqWa/jsoIHdmLNIYUCeYxIHxPTk3X4iTU11SH8gGQ5TFfMj8W7iMzaiMD317oC93I0qUC3b253FrOnbB9ZGyTAiE3INnMkscq7kqiwGN38voHaM5a3gXuOx4og58uWw3p7fb18ddAemubzM3oX3gkt3cMLZYRFWRyYw1ARGa1RSFAotB7tLv5v8UoWB4FA83+P8fEYLyVxfTKGjB6LmjFjS5S2Qdmlhh5Gp25CERYtLhFgdwm7BB+m5L6LdVEQ9BZYhtvc1tFaWgydoBFexOtGX4SQTQg06jx3/AG9N39H7P5LuTuWT0+7lZ8l2pf2kxeCcmVY3jXkskRckxNsVqhXdlb5lUi4KK39tEcQojlDoMeMa3ZcdYvc7jEMwFE7US5u3vU3EMiuBMYipVBUbolP3Hy8QH69SFbsLjxfSig8kOR/W8iNUfN208/ez9oYxubtlGtImO9fvzCjGnh0Jpqlz4kM0kee0/oPyZ8wUGmnXmU0GwUfjrRbIiExn+HVKtCgMo5otYkgcxDKUGTfDHIPvSF4H29ZydQzh2ooEc7fhbKs+byPxylysandUA/NB2rXavXavjq+vWrLRenFtbek3Y5a0x6WyS3syHjNdySV4iaRaMV4jmUrx+NUA4oBq4PlzwzxXmNlE3m+lViLTlxYrrUDRY5g3a3nL7aikY0FbabYW5UJWKexT8qah0kliJOkimRVAxDCHUhyGOtsjAYZlHKnwsPmU+BU9RT9nVHdld95/sbMx5XEzP5PIedAxJhuIyfjjlQ1VgwqKkEqfiWhGq6PhI5h61uFB2vjXyImnFn23iLdiUSQuMiudxM26pHkbDX49eccq91pKcrs9UX7JZ6oIqu2otVFROuKyh2btnI3F1FLZXh5XVu3EnxIqRv7wQRXxFK76tH1/7Hwvb+SsO6+2IxD2/m7fzliUUWOTijsEHRUdJEYKNlbmFovEBAfMhwrbckNY4XQ+NpVXMORFoue1uavqrOKQh5l1L57k0prFbjZmxRCSEsT1bTUEAavzmXPFrLnXIQ3dQh9fcWMF7PbLbcY7ws9GpQ1VCwBI36jr4ddOfoX383auGz0+dM152vDBaiS3LFkCzXK27sqMSv6OU8kFBIAFJGxEqvjH+QSQ5RV6y4Pv8UOc81+Px1KvtWeSyCUU8sf2VZOLPolfjwN6R2cg4FMJJBsJ0WbtYh0hFm6ZnOuwmWN8jWt2OGTh2dTtWm3Ifb406H3Eah3q36aRdoXUXcXbT/Vdg5P7y1nU8gnMcvIdvaorwLULKCD8aOB4flVwzMdLjeHEnaKHUZmWLz+4sRD6Wkq7EO5KQrU9aHsLOVx++cNDunsFLtFkyuWihjILAkTzKPgXt5nbWGZbYuqlvq4hUgdCaEfYfZrP0d7iy+JlzsVpczxw/wA2sgwVXYKsiRhkcAGgdSDxYDkKmh31Zr+zHNf83tH/AEd9n/onAfoj/kr9H/o7/Efmv8Hp68iH8xelOg6ezVTfrfK/9auPm5fpH+b875vm9/XX5y/ydRTSt/I/ygY21J+LBTRnUgsSP8E3R0X0KxOzOl6hyAZIVih5djFEQAf+51SODiuUw8sEHEXcV/eIeXSq3c1fw0NR9uu5ezcgG7bsGhPW0iI/sF1Lz4FLayiOU+qQBjCC9owq0LxZFBIZVU9RfoWI7bsAAB1lG6IAPiAdx/J9Pp0mzQa3ymPuT0pdRn2cjbNKPxmAgfbpL6r8r3tONgdoryEn3B28uv4Oetpeux8iRYkvHSEKVKQTUVFuJz+5BmmRNQkkDgVkPFEoCAimQDeoqoAF79x7P3fVpdpIL21ltwsgJ478uIofM5VGw2+EV5MRStdcpdsT27KbadJSyEb7U5Gvw0od/eegG+oQaTx7itak281YZV61VJSZ2kMECNlHqrH71c6PeC3JB+R4zeks0HYKIyXYkMczIVjfy6K5D+n1AbFLmNOb1LM21WYn3sfaWJqR0NQKbgiysf3I+IiNvaopXz0lY7KDxili8oihHlskrhj8wA+FlIrpz6PlzBOZh88oMkLSbz/OYCOp6Fhln60bVYCuOIqPRAU26bj7rY5tok0I5dKIg6COQBEFSILAQzziLN8pmnx9nIozENuJI+bMEiXzQWPFahpJCVBYrzEShAwRqGO5fLSLavlsknK0urtzKUVQ0rurHqacY0PIqoPHzDyoWWo6WtRYxF542WJtF+tR3cZZIFKyv1zKIpTdmh12ca2mlfHxamm4NUQaKHVADrIlQL2Hx7qO7oDZ5DCZCKOuIaGWMSsdhJNGVUSH8nnGfgJO7KEHhpP29MLjH5ezd6ZNZI38tRuUjcMxQePBx8QA2BLHx0ysRxykYt+Uyez6eqg05BMd4jmSKcc/jk3iVpl7JOw8sj7t08kl7Ixmhi3TwFkEWzFEoEZ+sdY5tseV4/cMkhAfkCtHA9pIBJ3B3NaqNhuTqRXHcEUsdforMMcabRieStQxqiMpoFUIV8xVoxZySX4hRqw6CaM59UxWvoi5ECmMdVucEypl7eCpim8vJIgB2In6n4xABMXwAA6mOMgt8m1IePm0rUqaU8CQfD2LXfxHEU1Vd5JLZL95Xy/YCP8AVX2mm3ga76z6/vDNjjoXjYzp5nHrvbRulTZMzKq+a7k1MosXMSjsfIxjD6YzIJmAB8CmDt2+n0iPcSCPu20to2LCJp3Yk1J4W0EdT7y1xT2fDTw10J/R5s5L3LTXZFI47AkgDYeZO4Uf83X276x1yLeHdx8O1i278swqVVvKnXUTO1cuHCqabL2JCHMcA/EID9CfQQDsYQEwuEM08bySTsv043WnUACp5f6j+Aba6TvLBwzFwOHhTr+HX6jnGCJcwXHLDYh4XxdR+VUVuuUQ8RKctdYCICXuPYQ79TL0+jaPsjFh9ibKJvwOvIfsEa+cXecqTd2ZKSP5DeS/sOR+1p9epjqM6z+V7/tGd7/2G4//AI9Vuomn+eL/AOK/tjXStz//AC5b/wD7Cf6kmtAfUs1zVrPxRP8AtGW1/wCxNBf77NOonF/nhL/iw/3uul8j/wDy5j/8vv8A/H1oH6lmuaNVN8353YNZ5P8AGfjpx/queX2dxxf/AEy9ZgNOuE5SaWDCsO39EwyMlp+s1m4ywSLnRZJ7Ps2fsDkVVrBFDmKQvfphybXE97DaWio7R/fMGJVdvhQEgE15EsBT8nVz+n9tg8N2jlu6O5Zrq2t74fqu2e3iSWWsgWa7ZUkkiXiIFSFm51AuCBudVm/IRNctuO3LHhH8jG85nief1vMdAjsNv0rien3O/u5ehX1WZVkG1rQtmcUIjBiwrj2e9mqj7rydLkKp4/yXdky7X9nf2uYukjREcIxRi1VavWqrSg5U676tn0yt+yu6OzO4PS3ty7yFzd3ds13Ct1bxQhZoQnExmOeapZxDyB40UEiu+tSLdwg6QRdNVknDZyim4buETlVRXQWIVRJZJQgiRRJVMwGKYBEBAe4dTkEEVHTXILKyMUcEODQg9QR1B1Xh8tn9m1zE/wChyZ/49G9M/cH8i3P9yOrO9Ff9KuC/x9P6jaUnxff2eHDb/Z+zv/mRDrPB/wAj239xX+ppL6u/6T87/lOf/dnU8OnXVc6z6fIh/bFfEV/6TqH+9S6iOY/zjx/9drpf0w/0G97fZb/t6m9vHAKw8x71UnPLnZ0rfg2eXD9cqrxnzCmL0ClWSZYncIwknr1tlbXbrVfFmcY5UQM1Z/ZWXZZXxT7KG7ul1iXyMqnIScrVGqI1HEE+Bckktt4Cg66r/tz1JtuxcdOnZNgYO47qDypL+4lE0qKaF1to1jjjhBYA8m819hU7DUtuSGUR2w8c9hw4j6PrTfT8tt2Xw7s4pMmEU/tlde1yABJJMClBFs/dogRBMvc5S+BA7iAdOF5ALizktqhQ8ZUe6ooNQrtbMy4Puix7hKtK1neRXDDqWEbh339pANSenU6qp+AyWkqvxR0bjLfI5Wr7Pxk3vQqfpNIkCijLQo2h4S1QkmoiYAFaJmFXb0jN0Tui6TaGUTMYglEWHtRmjsHsZRxuYJWDL4iu4P2Heh8aauT+khDFed5WvduNYTYHL42GWCVd1fyx5brXwZQELKd1LUO+ruJ2ciKzCTFksEi0h4GvxUhOTcu/WK3YxcREtFn8lIvXBxAiDRiybnVUOP0KQoiP5OpMzKil3ICAVJ9gHU65/t7ee7uEtbZGe5ldURQKlmYgKoHiSSAB7dZ6fgjyqwyc/wAwObtkZL16B5d63YpDGYuSAWT+xUGJvF2tMlcGrFcqay8S9k7ck0bKlAQN7FU4fyZ0zGiXa0Ds9xk3FFuJCUB8VBJr9m9Pwa6b/pFZm1htsH6f2jCW4wlki3TLuEmaKKNYiRsGCxFmH7sDqCBZJyhOQvNH40CmMAGPpfJUCgPfuYQ4xXvv2/8AD083v8pWX7+T+9tqqu0QT2F3ZTp9JY/9vh1Gj5N+A1+0GerHOPhg8PR+cGEJpSsapDkRQT2yqRCChXFGsLY4ps5ecLFmVasgdd0pFmoeMcj6R26jVDm8TLM65TGnjk4t9vywPyT7TTYV6j4T4UlnpL6kY3GW03p734v1Hp9kSVblU/SyMdpkPVU5UZ+O6MBKu4YOxCHyB0PnxgnEqfZsQpO0598hPDuA3LInorpStItJNFXZqP2bZ8VORWqU09ZreyWWKCyCqajRx2coKAKYZaLK2lu4HG5S7hDp4qeX46Hw/EdxqQv6aZH037jzdtI31GBue2Mm9pcinGWPyAaEj4fMQEcwDQgh1+BhrQr1LdczawpfvCWMEynnhWdhdwZX9S2ajt3P8u0O7YrWquouo1QHLRJdn9x9Jw7ScGbCsT3CaAkEfERAafe0ktM7mMNGxjaWWO9iNaExzqEm4tQ8T50MlWoePmKepGurPTLNC77Vtoyfvbdmhb3cTyX8aMB+A+zVafFzdJri1yhwTkJJJnQio+ynhLOwcQ0DWSvKgiozh7M1JVoNQTRsU3ipZIRFymmsqogoAgPYemi/t2usfLHjQJL+zkjuYhzeQNIpLhDI/wA3mhXjYKSoWT36szIW8Wcw1zh5jRZ4itfFWI+Ft/FWoR9mv0Ss+kK5oebtAh3cBIqMoqD+02CSaNXyUrTHbcXVKnyrHE3n7qGOCah/qUkk2dJCHdM3UwxTY7uPtxWtvpzMscYWSVFasO5hc16MFqrV+WZJUIqp1x1k0vMPmT54mVGd+SIxXjKDSVNvDluPbE0beI0ydxmApCT8VgjZJ+0U9qxQZrmRbvnxwEGxCgDgqpG/byWVUAvikgBzdvqQOqvzV4MAJBN5Us0ZovAkBm/JoOVadWrSgWp8RqY4y2OWKeX5iROKksKlV8fCleigV3NB7dR0p1ytNHsbzVj+3dVVOq6RGvZdV2m3kJezOUIxU0y2bKfjXgo57H+gkVETn7ICBS+mCZhi3aOQyeIyE3dk9GtHtblSxYBi5CkOAdyistABU0XYUodSnN2Fhk7JO30qLwXEDBQKqqAsOBI6OwaprQb7mtRpztHVdXei1+uR7KYnUKctQ6wo1Zmfu0ow8RnL2TlfWSje5ImySK8tHOY566J4rHRBJBUihDAMx7u+qzPbkVjZCWRrRrWMBeRCmO2LuGCfJI5eJo3cUanFWBB1HsD5WMzEl5cGOP6kTyVbiCwecKtC3zRqFkV0U1AJZlII052CzyN9aHiJYiT64wZGjWWfj6KKkpBr+QxVoapemZYycoRMxXoB9EnxFSiAFMTyX9g3kHckPlTqGzEVElOwPD8mQClaNQ8/Y/IGld2vu61kw0nmwErjZKsg3ID/AJUZPT4duHtQqd96S9fKxNHgXksuLozOMbeYNiCLtw6drGIg2Yx6avksq/lHqqaCCRTB6iqhCFD6gHV1OtphLFrg8vKjX5a8iWOwVa7lnYhVUHdiABqtkE+TulhHHzHPXoABuWamwVQCzGmwBJ1iJ+cDf22t8lqBg0NMwR/2MpSb25yzl2Y1eDV70/Gdn45V43SdAowgymTjiG8DAZAqXfsHcQoZ7uS9yl3lnq8USm3BSh5uJHkunQ1FVE7+ShB3S3BHUa+g3oL2ucN2hPnLmOQG/K+WtPjFvEoSI0NKM4BkI/OZvHVdGCY5L7zyvwjF2EJU/ucvo8YpNDTTmet28THTDd7MJy7xygMs6epKRixllHy7g4GclKT0kvEnSa5ml/Us0dm07XN2EtoRJsTJcERIVAPEKA4PwhRRCTUgnU37lu7fBdtXucnaX6aK3Zh5gAqeO1APhoagAKB03qd9fpVxUa2h4uNiGZfBpFMGca1J2APFsxbptkC9g+geKSQB10dY2kWPsobCDaCCJI1/eooUfsDXy5uJ3ubiS5l/SSOzH7WJJ/ZOvWqcyaSihEjrHImc5UUxTBRUxSiYqSYqnTSA6gh2DyMUvcfqIB9elWtQAJAJoPb/ALWs+UXlHOln8rlg56rcNLL+yKXx0uMJ09LaOPxtLJGt4+KURspo42kp1oyy03GD3Z/c+5GygD6onKJOoisGUGeOVNs305j4U5x8qbb/ADU6jpXXTE2a9O5PRqL04XOxfrtL76rzTa3nkciWrHy8jzKBG+by92HShrq//wB86+z/AHL7Q/B79t999h9WN+5g69r6/wBo9YH4xHv/AFf5Hy917b1Pr6vh+PqW1PGtDWnTb8Xs/Zprmvy08/yua+Xzpz+LjStOVKcqU3+XlTwrtqgKq5PzoiPlYvHPSQ4ZWIuTXHH22OJVBttfH9xpUcwZMKp7eyuI82jIVpZdaVrh/UZEkxFNuuAgqc5BIaJx2+UXPNlTbH6do+FOcfLw3+anUdK66UvM16eT+jdv6cxZ6L9dQXxuvMNreCBiTJWMHyDIAFcUYx7sPlANdXxXGwzdcqclYIGjWG+zbNs2WZ0euv6pHT8suu4bonaNZC3WKuVVuo0IsZVUziQST9NI3gJziQhpTI7JGXRS7D8kUqfxkD9nXOdjbW91epbXNxFbW7EgyuJGRQATUiNHkNaUHFCakVoKkVv8GqfyXjOQXLnYeTPHybzq08h7vASNRsTbRMovVZqOOZhWGVazPMHhqxbXNlQsaS8jKyLw6EceNWdu1T+sUwlAzPi470XdxcXsJR5WFDyVgEUUVdjWvUnam/XVp+oV92nL21hMH2nk47qzxlu6yIYLiKSS6uJDJPcDzIxGY6LGiguHCqo4neix+VHE7ryV4d6RgWfY/Navb9FatAq7iPsef1iLo1qrUpG2KvWWwyV6tNdULGGesfbqFjknzo6KihBTKU3l1szttLe457SGMySONqFQFIIIJ5EbfZU6Q+j3cFh2p3zadyZO+js7K1Y+YGSaRpY5FZHRFhjf4qHkOZRQQDU0prv/AB6vuVdfwfOMc5YYjKUO/ZXQYmpraM1v2a3WoX5pWQbQUC4RLV7XI2iNsriASRUeldsCtTLoqnK5MKhE+ssQb9LVLe/iKTRoBy5Kwamw6Gtadaj8Ok3qbH2dc9x3Wc7MyCXONvLlpBAYZ4pYTJV3B8yNY2jDkhOL8qFQU2J0lfk6rXIPZeMuucbcCwOe0mf2CjIwBb0ve8tptGq5Xs4gMojJ/rXco21vpRvFx5jpptYxRsczhMBXAQUAmvNpd3NjJZWkRd5Epy5KFG+9akGtPdT36Wekl32zgu7bLuruTJR2ttY3BfyRDcSyyUQ8SvlxNGFLNQlpAw4n4ele/wDG3B7xl3GTIuP284ZO5fZ8YzeCpytp/XbM7lTbgaFUUjmqkCtTrfL2Fo6PHJpLLJv49qmmIiUiqggHfPDJdQWMdpdxFJI0ArVSDT2UJP4wNJvVW47cy/dt93L25kY7y0v7t5fL8qeKWLn8R5iWJUI5VAKOxPUgasI6d9VnrP8A8zMY5vbF8hHEjk1mfEuVkcy4lS0+3eJz2x4hBWPSGk1MLN5SUq8Ya9PE4tmaGSIsxLJqtXCqh/FdJv2HqJ5K2ydxl7e+gtyYLcnq6AtU7kDl7Olf2NdKdh570/wfplm+08tmkTLZpEI4Wt26QFFqqyN5I5HkSH8sMoG6ltXtU6cl7JWIecnqfOUGYkWorP6fZHlbkJuBXBZVIWcg9qM5ZK25VEqYKAZo+cJiQ4dzAbyKEpjZnQM6lGPgaVH4iR+I652vreC1u3t7aeO5gU0EqB1Rx7VEqRuB4fEimo9m+mC5qZFb9z4ubHnOcyK0NqD6sEsWTzLZ4hHOojWKHKR97zOQayTkxG8cs3u9bYj66hgTTARE/wCDy6SZK3kurGSGE0nK1U+xlPJd/wB8BqSdhZux7e7vscplFEmIWbhcqQWDW8ytDOpUbsDE77Dc+G9NUpN2vzNl13OeRbvgDh0TtkBGwVN1K60DkDSK4vuuXMzkPK0jRKg7uMlXXjsigC7g5P1hdV+QAAbmFko4ZrRofzk+oS8NpELkABisijmvirCpHvU9VPTao1fjv6EHCXXa6dy5B8BI7y28U1lK4tLg/LLBKIlcD8mWOnGZPmHmBXWX3yPsOeezLUDIsP4kRGp8f5SFj7Pu0Rcd0pmao6LKLeazHGZpeNspLCSjQjtuRxYCtDFRsAimyKsLH3ZXTjmRlbgpb2tuJLQirguq8v3B3rxH5VPm6VpWsI9LJPTnBLc5vuHNPZ9ypIY7RorSWcwKNjdKGTh5rglYeW8O8hXzOBTr8Hc550Wvkda9w5p5Nm+EVbNcWicV4145ldkr9gpVcjLJPMpnQZxinBTk17OSOzpEEw81QapgzIRFsiRMigmyxcOUkvGuslGkSJGEjRSCoBNWOxO+yjw22A1o9Qcp6d2fa0Pb/YV7d5G8u79rq+uriN0ldkQpCh5olVrLM9ByPIlnYkinR5cxXLm3cuOIejZDxZslvzji7f8ATp65Tj3VMVrDnQIvRM3Xz8n6gQ0vfSSIGiW8u6XN93JFmWUTKmUpSm9QPcguQkyFvNbwM0MDsWPJByDLx+EFq7V8aa1dkzdlWXZWbxebzEUGVy9tbpEgt7qQQtBOJvvmWHj8RVR90ZKAk+FNWlVWYkp+uw8zMVeYpUpJMUnT6qWB1AvZqBcqAPqR0k7q8zYa84coCH1O0euUR7/hOPT4jM6BmUqxHQ0qPtoSPxE6qC8gitrp4IJkuIUYgSIHCuPzlEio4B9jIp92qT+YPxZknOb/ABn5zcdohBhPRXIbI53kxQo9w1imFtr8XcYlw51qNbqrtWatlgE0gVmW/wBTSKCYO0yi8RU91GshgueTgylmKOJkMi9KgEfH9o8fb169b97I9YDb+n2W9PO6HLWz4u5SwmYFjE7RMBbMaEiN+kTfwZPAny2HC9DqUa551UR80HCJfmbxGnEakySW1nJF1dAz4/iBVnqjBub71BeqVMyhSSkcUxQ+vYogI/l7dQLva1ksxB3ZbIzyWAcTqoq0lnJTzqAfM0JVJ1HiI3UbvqyPTbPri8s2MuGC2l5xUEmgWVa+WSfANUoT+6BOw1gHjnqk+zY0mcTVRsiLhWjMagyjAi5BtLN5R6/eWa+WSXSerFTYTkq6XcNWoAZZRFX1xbpkKZRhniSBmydoQbIqJjKW5KUKgLHBGlB8SKoVm2AK8eRJA6Wsb4ghW2cGlPYR1rrRF8OnylJZqascWN6szWGCHVUYYXp9hM/Qr8nBSboRDO7a5dNyuy1WWWRKtEPxTFRmt4qEKcfXbumMzXHal6cvZD/uSR2aVfm+lkchpfMVORNtK3xTcAzWs9bhVaN5UMS777Nj7gifJ2ClrsqPMjWnJ+IoskdaDzkG1CQsqfdsVIRl1jzFdzDkFCoxU8is2mmnhMFYkkCtJyOBcvpIyEY+jHPpSsE4TECoP2CyjVwTsAK9/MgTS/xPbHqBYrDd1FyKSABhzAIoGVlJWSIinGSNijDo1ajXP1rfZztC6ae1IMDfASVJQ03KsrCqSD8pHAZT1XodMPd8Zizu6zHSUdNRH2BCWiYQYSXfR7BrWXsaWKn2qqjJUnrxL+vJGSWA5QUMn5lKIB5D1XWW7Z+kuoILmKaMxh0Tg7KghKcJalSCUaIHlWhIqB46l+N7gd4ZpoXjkEhVn5qGYyBuUZAYbOJKEU2BoT4a8EJlkQ1t7+01qdssfISS8OEoixs0pFt5BCFZRseizeNWCjdJy0Mzi2iaqC/rpqLFESgU5jeflliozk5b7HzTLLKUDBZXQEIqKFYKQGXiiKVbkC3ShJrndZeU49LK8iieKMPxLRqxUuWYkFq0PJnIZaEL1qAKSGrWaULKp2T1KRlnce9mmJo5Ng+VQ9lHry7pB/JsoNgxalfSMhOSLRI5WxfcGFUog3TL5iUbFw/auB7Wvpe6JZHjurmMKVYjiCxDMI1UVZ5GAPEciSPgUVI1Dchnctn7SPBRorwwvy5KDVgoKqXZjRVRSRyPEUPxk0rqpj5R/lErfGasO65WnbSQ3aUZuUs6z0jhFy5oiztBVoOk6OVqqqmwnGSKxgiovyFRkcwqqj7wSEZxHufue7zt42JxTNEYiQ7j/o1RRmYiqm9ZSVhiBP0gYzTHzvLjW6fR70fuO5rlb6/Ur28rAyykECehr5EFaExEj72WlJKBV+7qZMbyz1s0eTUzq8a6t0loYyczKXIDoSZSWRRZws/h3TpuoLpF+2khILwzN0wetVRBMxF2nYFIukbGOO3xDCGK24qse4+CgAYA9QRXjzV1Yb1V9x3GEeRUixTiGO3oqx7r8GwDAHahFePJWVhuCr9NM/7vdwvkRNaOa+iwyrZSabjU8daSAuF1EYVFMqD+bbLPxWdqtBbppt2xznETpJpnAwiA9SzszEjNdw/rFhXE4lmVDQAS3rqQ7UAoRbxswNBTzpWp8UZ1yh/Sa79iihh7BxjgvXzLkig8aqhpQAk/Ew+0eOtVHV3a4y0lb0+dxdJuMnHrmbP46q2F8yckKQx27tpEu3DZcpVCnTMZJZMpgAxRARD6gIdN2Ymlt8RdXEB4zJbSsp9jKjEHfbYiul2MijnyVvDKOUTzxqw9oLgEfhGqNM+5G8k7rAaRMuN1scYfO6Ea8C3SrFRfBMppy0XCmjxWOxZDHqGdS6R/UAiwemU/4e4FAeQsJ3137lrK/unzE8ZsbL6igihbn8aR8a8V4mrg1o21dq0r0zlu0OzsbdWdumLhcXd15NTJKvD4WflTk3LZCKVG9N+ulDW9+3SdttSrj7ktYq5G2WjDb39mlaTU1GFcXLHSkio0fN2qR1l4tBOKMCjwolMTzA3o+JTdltj3r3heZO1sZs/PBBcWfnNK8EJWI8XYhgBUoOBBcbiteNAdJLztXtm2x9xeRYaGaaG68pY1ml5SDkq1Uk0DEsKIetKcqka+0vsnKisWGnVC1bRbYazWG9vKXLswqlNdMopJJ5Xm8fYYd+DZIlji5hvZUHLcxStyHQKIgcfIvWd13V6i4++tcZksrcxX8940Dr5MBVAGiCyI1B5qOJVdTRQVqQdxrG37f7HvbS4yFjjbeSyhtRMh82YMxpIWjda/dshjZW+YhtqbHXuU2DkkpKbxX4vkDaJGx4qlMvmkSWl1Ih7rE1mwJQFkfMzERWUjVYkVPdigBHBjtfqAgYDAG1u6O/TcZmyt81cPfYkSME8iEGdIpBHKy7EoUrz40clPfUDUMB2csGLu58TAlnkigLedL9y8iGSNTuOQf5eVVAb3U16a7rnIuyWPSq5H8gLq8dZpRz2t8lG0OlvnkzLR7yHjJ6rRbbzRTFxGycx6CbgynguZsqbwIUSd9lj3N3zf32QsYc1dvJj7PzmCW8DM7qyLJCg23V34hq0YqxoBSuF3ge0bOzsrybE2ype3PlDlPMAisHZJWO+zKnIrSq8lFSa089L2HkjcpnTopru2gCbOUItwVrHZvVJWfmff2qLqLtl9jSFEWklEyEp5KJprOCHIgp4n7eJhwxXdHfmVushbx5i9rYqhotrC8knKZIWXyxSjIz1IDMCFah6E55Ht/s7HW1lcPi7Sl4WFWuJVROMTSg896qyrsSFILCo609Ff07lNO37T6Ix32XsT3NCPFSo0qvU6amrwkwm2kTIHp0U8aRqUgrEtHCjx0iVc6pSIGTTKocQHrOy7h9RLzM5DDw5qSeWwDGkEUEklwFkVG8hGVQxQEu68i1FKqGOsbvDdj2uKsspJio4Y70gVmkmRISyFl81gWKhiAqniBVgxIGkg05CcjXeeaXfEt6s4/s+tdZrLeMPTqs3++FtTmZQj366zlkk6hToEg1TLtzt1TkE5Sd+4G7NkXe/fUuDv8yuZuP8AArmKIL5EI8zzjIFYkqDHTyyWUqSKgVrWi+TtPtCPLWWLbFQ/4XBJIW82U8PKCFlABIevMcWDAGhPSlezLb/s8fnUdoaHJO8umc1YLdU4dopnNNblcTtUgYmYAXLgFlnDWKl15ciCSooGVS8ROomUB7Aque9e6ocGmbTPXjRyzzQoDawCskMaPuakhHLhQeNR1ZR4J4O1e3Zcu+IbDWqyRxRSufqJjRJXZNhQAsgQsRyoegOvrZdt5CQFGgdFR5E2eRq9oqyD6CchTaY3XXvgTTyJl89dIACwt3VfbsFXjp2AnL7b0xKkIrJ98r/u3vayw8OcXOXD4+4tg0Z8iAE3HmMj2xG9DGFLu+44cSF+Iaws+3O07vJy4dsRAl9BOVcedMQIOAZZwdqiQsEVNjyrU/CdJOm8ieTtlrl8ukhtk9FVXO2MIvMuGtfqj+UfyVmlfs9fhIlmrFMm3uHrkiqiqyypEkEETGEDmEpDNuL759Qb+wvMrPlpo8dYpGZCIoWdnlfhHGilFFWNSWYgKqk7mgLhke0uy7O8tcbDjYnvrxnCAySqqrGvOR2IZjQCgAAJZiBsKnThxWncmpbR8jpqHIec/V7aYNlP1G0kqFWM8atnhJNFZnNQB2iZUZCKlYlVs4Kk6UTMHiomYwG8QfLbuH1Auc9jMUucl+hy0KyQzeRDUBuYKvHxFGR0KMA5HRlJBpponw3ZkGHv8i+Ii+rxspjli82WhI4kFHqaqysGWqg9QQOummuvKLkvU5NpGl128EXXiWsk5Z2Sn1OAlWJ3izr26SrNJlKJKIOWKSThJUFAExFvESFMUe8ay3qH3/jbhYBk7sOYwxWWCGN15FqAqFcEFQGBr0ahAI0/Y3srsy/hab9X23ASFQY5ZZFagFSCWXcMSpFOorU107Vg0/kpEZ0S/s+Rs4v451RNFXjJSmVWLbrtL1YpStIV+KlkkHxHtijnMUdwZEyKYLtPI5RASGL1Jb3uHv22wYzMWdmP+A29yUeCFARcSvEI0cBuUqFCxXiOSVIoQRphtMN2dcZj9VSYeIVu57cMs0rEGGNZDIyVWkbBgtani2xrUHSGm915ZwmWVLU1NnlF4+0T8lBLRhIOuEcwZ0mZX8A5kFxgjFOSzMkHSzcClACpNwHuYT9itF33j6lWnbtt3E2VkaC4meMoI4qx0XlGWPl/wqh2Wg6L1NaBztu2ew7nOXGDXHIJoIlcNzko+/GQKOf8GxUNXxbwpv257kBtETnsNoDXkleXrWyy14gK+0XzqmNCuZalIQqw++cEXcrsmE0aaICKnoHUSAg+qQvf6K7zvXuu2wkWajz128dxLcRxqbWBavAEPxGpKrJzHE8SRT4gNJrXtXt2fLSYqTDWqvDHDJIRcTGiTFxsKAFk4Go5UNdidKGw6ZyYhczR0dHkPYzIKUOi3ojWXpFXio2Q/Xack4ItVhJ1NB6lI2qIPFndqNvRL6jHuqHh4CHS2+7g7/tMAM6ucnKGzt7ij28SK3nyPH5MclGDTJwLleIrHVtqHSS0w3Zlzmjh2xEPMXU8NVmlZl8lFfzXSqlYn5BQ1dn23rpChunLIcgV18u0yho9vbmVacwhYOue/bRskjJox9oWXGC9EIx7Ow7mPTKACb10TCIgAlAWf+eHqSe2D3MMtIYVuliMflxcgrBwspPl04NIjRjx5KfdV0/mz2H/ADgHb5xqeabcyB+cnEspUtGBzryCOsh9xHv10bXt3KCq51UL+pttrk2dxjYuQj38bUqk6qKT16vJpSdTd2JBmsvH2+upsU1HDZ01RKsCpgRMb0hE2/Jd3eoWOwdrmmy1zJFdRoyssMJhDMXDwmUKSs0QUFkdF5VIUnjU6bDtvsm+y9xihjYEkt3ZWVpZRKQApWURkgNFISQrKzUoCwHLZsf9MHkr/nYmv0N7n9F1j8//AOU/QX5f4PydR/8A9UO/v/Mpf0PL5Ievt/R6e/8A0+7N/wCoRfpafNL0/s9aIxABAQEAEBAQEBDuAgP0EBAfoICHXcJAIoemuR9Y8fmu+Iq31O12TmnxFhpA7OTSfPtez+qoqJysa5et1GcpbK0iz7KnQkGS503rdMPJQgj4/j+i1SX9hF2fIbW7QP2RNJWNyKrYyFgwilHhatJvDJ8tu33b0j4MvQHZHeP64jWwvHpnI1oCTT6hQOo/4VR8w6yD4hVuQ1mvr7GF0NKBqcWgoT2bZ1LWqwTDpupbTy5xYtjsUFJIGTYXEjMgnGxjQHR2aaCgLuSor+uqXXeNcYsy30xFGIWNEB8rhueR41NFSskjcQxI4oWXiurdsL7lTifx6sW4qfKhyq4sxsRVHLiP5C4zGTDyNqcbZXL4ZlErBwVod7ntmbKkuEWmIkApTpgBx7gQVQKAB0xS4WOGQyYWY2F1tK8Drzt1dxUngGQ28jdWe2mhZurBtGT7XwfcVZblTFestDLHQFh4CQEFJFHskVgPCmrtc2/eJuPUxHtWt8iNmob70QBdjJQ9b0qJRUOUCqEbv0mjSxrNzdxDu6drHMX6GEe49L/133rap5Vxai5iG1Y54pB/Y3MUMgr4hp5Ntix1Arn0PnlcyY6a1cE+ySFv/ZZ46/vY1HsA0s7F8/3EaAYgNTfanPuE0wIk2rmYV6qunBwAfEzuTs6dlJ63qnN+MfxeRhN+UfolTP8AckQEdhjXhoKcmezhr72ZfrHJrXfjXcnqdKbT0Ez99JW7ktFU+LyzSAfYq+Tt0291OmqyORvzn73pcTKFwSihkcW6B3ELalY5Rxc9HMgv4JOGcJKyKikVW1TpOiesjGFImUqgCdICiHTVcHNZCfjlrpYXZTVLdpDKVNaq11IfNRDuCtulsrbjfpq5u0vQTtXGyI2dnN9MKMIFURQVHQtGorJQjYyljtsa6p7PIN3jiF1W2zknfZay2F6xu7i1tPvaB3Lhk8CTSlFVzuXwvmrddu6aKFOAuEVRFuDdRsYOkoiMaPibKNbeGKMNEIzxPzAgjoKE8g9ehHxFg9dXjwdVfFWiLBFHGDFwPE0BHHjSgoSCrD8kgcuQYasc+M740bxzt0VtYpSDmaDxagZmPmLW7XeSLhhaZJil6R4WsHfgku/Tc91U/XOKqiLY4o+soIKKgts7PI52/wD1JiHBvkFLi64ClrExrTb4WuXFPLiFAD966qgAasPVb1VxvpziTEHS57slRliQABlB/Lkp8oGxPQFhUAbDW9mlU2tZ5U6/R6dEtYOsVeKaQ0JFMkiIt2bBkkVJFMhCFKUTCAeRzdu5jiIj9R6vnE4qxweNhxWOThZwJxUdT7SzE7szMSzsd2YljudfNzJZG8y9/Lk8g5kvZ3Lux6kn9odAPAUGlP046Q6TtvinM7U7RBsjIkeTNdm4podwYxECuZGNctEDLHIRQ5ESqrAJhAphAO/YB/J0hydtJeY24s4qCWWCRBXpVkKivXap320rx86Wt/BcyV8uOZGNOtFYE099BqoOicFOSNEGeTaPsflo62VV7TrPDS81aTsZWEfqs3aiQLMIBhIMnbZ/HoroLoqkUTUTD8pRMUeYsP6Pd+YfzljfFyQXNs0EsbyTcXjYqSKrGrKwZVZWVgQR4io1f+U9Tuz8oIi65COaCcTRuqR8ldQRWjOykFWKspBBB9tDr0IcF+Q6U2tMmDF10hqrymMoZWduYRcZBPIRevik0FKJSkVHSMe6VMVZddUxnCplT+Ru3bNPR/vhbs3R/VRX6ZoFQyT8EjaMx0FEDEhSfiZiSxLGp1i3qb2k1sLYfrEN54mLhIeTOHElTVioBYDYKPhAUUGuq44b8q5AuWFmZ/KJsMfP41I0lN2gy52ScqymGMZLOW8Ag5fMItywTTblA6Z024el5CQCgCh/Sz1HnGOF1NjZhiz9zyklrxDq6o5EYLKhUBdwQvw1pSidPULsaI3xtor6L9YfpeKR0rxKMyAuQrMGJbYgt8VK1r6Irh/yrgtXktjhpjH4+1ysnZZV42TlrMtCKL21s/QmkBYuoBdY7Jc8kooVI6pykOBfylKAdbLb0w9R7PuR+6bWXFpkpJJXYc5TGTMGEg4mMkqeRIBJoaeA1hP6gdjXWBTt25jyD2MaRqDxjD0iKlDyDgVHEAkDcV9uuRSeD/I6kI3VFBXG54l+rDyo2EZ6wXVRRSGkXzOSf+2VjIuMURfOXzBFQVxE5yiT6dvI3dNifSPvvELdohxUwvbdoZfMknqUZldqFEQhiyqeW5FNupqoyXqV2hk2tmYZGI2kwlj4JD86qVWoZmBUKxHHYb+4a7Fe4d8nKm4uTqsrYxBuLlGwMYqvH2C8pOIMlclIucjXsI4GPO4CUGbhm7tdw7O7OusB/PuU5gFVY+l3qDjXupMecVC91HGhKyXAMflOkiNGeNefmIrszlyzVrsSNJ7v1B7Lv0t470ZGVLd3YBkhIfzFZGVxypx4OyKqhQopTcDX1Jw75Glu8hoAxmBFsMhPwtuKqylr1FIxlshXSr0ZyIGNZNnTAs07cKHkGZVfZOfLsCROxe2S+l3fQy8mb8vCi+eaOaqvcIFmQlvMTgoK+YSTIgPB6/KNqYn1B7QOMTE88r9IkTxUKwsWicBeDciQ3AAeW5HNafMd9c1fhfyeeV3Ra7ISGOPg1C1x10tEspMWpCS++xb2TkGisaRpBt4xm2B1MuhMkLc4GBXt9AKXsnf0q9QpbG+sZ3xb/rG5WeVy8wbzEZ2UrxjCKKyPUcTXlTwGty+ovZcd3Z3cSZBfoYGhjUJEV4MqqQ1XLE0Rd+QpT3nXMe8FuRj7PYLN1HGPJRFfskvamUglPXD7upLTrRmwkhcqKQyjA7ZVpHIFKQrcnh6fcB7mN3Ty+j/fUuEhwRbFi1hneZWEk3MvIFV6koVoVVQAFFKV8TrfH6m9oRZaXMAZA3EsKxFSkXDihLLSjcqgsxqWNa+4a/j/AILcjZDPq7nKrnHkois2CcsrB+jPW/7srJWJFm2lPdqKQyjBRuqhHIFIQjcgp+n3Ae5jdyb0f76nwsGCZsWLW3nklVhJNzLyhQ9SUK0IVQAFFKe86IvU7tCLLTZgLkDcTRJGylIuAWMkrSj8qgs1SWNa+4aKlwY5KVGPtcGhJZJLVu8RjSKtNelZy0ixkko16WSiHqK7GAZP46Wh5AvqtnCKpTEEximA5DCUTGekHfuMgubNHxklheRhJo3kl4sFbkjArGrK6NujKRTcGoJGi/8AU3s7ITQXTJfx3ls5aKRUj5KWHF1IZyrI67MpG+1KEV0q4ziTyoir1RL22eYoZxmUUyhKLX1JW3fq5BRkei8TbIA3SiEpF8qZaRXcLKruTqOHConUEQ7FByt/TT1Gt8xZ5iNsTzx8Sx28Zebyo0UMAKBAzGrMzFnJZiST0GkM3fnY8+MusW65LheyM80nGLzHZiKmvLiooqqAqgKooPbppXfxx787XVW+85mkU5z+igWx2ZZJoiY5zptW5nVbXWBu3A/iQDGMIB+URHuPUak9Cu9JHLebjwCdh5spCjwArETQeFSdP0fq/wBqxoF8u9J8T5cYqfaaSAVPjTSyufBnkdeGlLZSTrH2TeiVKPpcQWMn7gmLiGjHDx00NIi7hnhVZAqsiv5LJgkJiqdu3YpezplfSDvvLx2kU7YtEs7ZYE4STbohYgtyRqtVm+IcetPAabsd6m9oYyS5khXIM91O0zcki2dgAeNGFFoo+E16e86U0nxE5QS1ZttOdr4watWoKcKMSNivizSpq0VgMbBL09JyxWJEKC1OYrnyBYrkDmA4fXpwuPTL1CubC5xchxX0Fz5FE824Kwm3XjGYAVPA0qH+bnU166RQd/dk297BkIxkfrYPNq/lwAyiZuTiUgjnv8vTjQU0lpPgtyMlKDWM7Vc48jE1Oan56NkEJ23/AHZWQsxGScuL1RaGVYKorFjW/gUjdP0/S+g/iN3brj0f76uMLb4NmxYtraWSRWEk3MtLxD8qoVIPFaAKKU950uh9Tu0IMrPl1GQM88aIylIuIWOvDjRgwI5NUljWvuGlrIcUuU0nVC0h4bDFqsFGr9FGJUlrqomDepyD+UrNkQWVjVFmVth3kq68XaIpkXRXMiskon2KDtP6ceotxjf1RL+qDjvo47fgXnIpCzPFKCVqsyM7/GtAysVZStBpti757Ihvv1nH+sxffVST8gsPWVVWSMgNQxOFX4TUqVDKwO+vGjxD5QIV+eqRXGNnq1gpMJRnFeVst/UimLWBkQmGU9FtRZARpaFJcvuVXf4gUVMcRJ2OYOtKemPqEllNjQcUcdNaR25iMtyUVY25rIi8fhm5/EX3qSdqEjW1u/uymu4r+mR+uiuXmEnlwcmLrwKMa7xcPhC+ApvsNcd5wp5KL0uTorFbF4WGsDqqPrMMVM29M07IU1msyh5BRm5hnMXFvVyriq9UZINzPVylMp9A8RTSek/frYqTDwnFRWs7QtLwkm+8aBSqMVMZRGNayGNV5tQn2a3x+o/ZqZJMpKMjJcRLKsfJIvgWYgutQ4ZgKUQOzcFqB7dIf/8AXNvH/LWbfor2X6dnvz3+6/ox+b/h/L/B00f+hfeX9tsP0XH9JJ1/5Hpp0/8AV/tf+1Xn6Tl8idP+U1eB11zrmnXzWRRcIqt3CSa6C6Z0V0FiFVRWRVKJFElUzgYiiahDCBiiAgID2HrCSOOaNopVDRMCGUgEEEUIIOxBGxB2I1kjtGwdCVdTUEbEEdCD4Eazy/IH8BeQ8iJmT1/jRLNcI2dZwpLOWTNAU6TZJfzOv7twzaikpESKy/YfcICQ3f6mMJQAnVb3XaeUwit/NcpcYZh8VhOxCqPEWs5DGJfZBKHh8EMI1bvbnqY0fG37iDMRsLhBV/8AjU25/v1If2hzrLjt/BTnNxHkUIvTcEsb+CrCVlUrdxoMavO18svMwKNdTtPvYho6dmXYs2KKoEFBuUy6JVDnMoAnGM3GTwrStBlzNjMhKyB47xfLDokhfy45STBIrMSOSSvsSAANhd+Ezljk4w+OniuI/wBwwJH75DR1+wqNRBZXVvFu89hrGhIJRUCBmlzY2KKL7hyg9mJFN+Rmi7BV/wBo+sO00GY/yKiK6IGKUviQelsuOM8d1c2TI0su8TRtUCirSpHw/FICzdQQaEmp1ObS6NDTZz08KH/b665cDZoYtilXjxITNpGOmY2OVg0WxHkI4dNxbw0vGsRM1Iqsw9IgHKJ0lTpnUMByrCB+sbuxn+lREPxqys3MmjgGrKx3oDvTqKgCnHbUvtbtmjVVPQgmvQ0O4P2/i/BqVGb41yW5FLvqlkeIX63jZC1JNeXRrz2KaqSkHGBFSE88euEEo0FbOn4nelKqoJzIpKG9RUvl1EZbrC2lzHH9Qs1+pkCwQBriUh25KgjjDPSM7KSoAqRsp05v3Dg8BGt/lruGCKMOfiYdGNQoqa/B+T9pA21oJ4Nfu8rwHsTfuaU2iZo2Ubv2uQVZ2KrZ0cPA/pWiX7FFVMO3idIhSgYA8TEEPr1JsZ2n3Jn253wfE4c+FVa9lHsHEtHbKfaTJN7BGd9Ub6g/0m7eKJ8d2JHzuCCDcuKBffGviff08QfDWqKk0aoZvV4il0SvRVWq0E0SZRUJDNEmbFm3RIVMhSJJFDyOJSB5HN3Mbt9RHq3MTiMbgrFMdioVhs0rRR4k7lmY1Z3Y7s7Esx3JJ1xvk8nkMxeyZHKTPPeymrO5qSf2h7ANh4aVfTlpBo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGjo0aOjRo6NGuFZf0JIfoL8wb+kv6E/J/6w/wAR/f6bMz/Jsv8AFfl/6R+h/wCM/c6WY/8Ajifpvm/gv0n9b79UY8q/0q4/sv8A89/8b/z3+OX+c/4z/ddcm5z+ON/mv1/8O+b+u/b/AA66N7Z/QD/Onp/CdPwftaY7F/6Vt/7Jz86h+g/5x+U35v8Aw/738HTVb/px/I//AM9+i/D+3p+yv8UP+dHj+j660AY7/RpL+qb82l/VH/R/+IH5P/F11D2J/Jf/AIJ4fyZ+i/D79c19y/x7/wAR8f45+k07nU51HNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNHRo0dGjR0aNf/2Q==" alt="Πανεπιστήμιο Πατρών" class="h-12 w-auto object-contain bg-white p-1.5 rounded-md flex-shrink-0">
+            <div class="flex flex-col flex-shrink-0 pr-4 border-r border-slate-700">
+                <span class="text-sm font-bold tracking-wide whitespace-nowrap">Τμήμα Πολιτικών Μηχανικών</span>
+                <span class="text-xs text-slate-400 mt-0.5 whitespace-nowrap">Αν. Καθ. Παναγιώτης Πελέκης</span>
+            </div>
+            <div class="min-w-0">
+                <h1 class="text-xl font-black tracking-tight flex items-center gap-2 whitespace-nowrap">
+                    <i class="ph-fill ph-activity text-amber-400"></i> GeoFEM Web Solver <span class="text-amber-400">v2.7</span>
+                </h1>
+                <p class="text-sm text-slate-300 mt-0.5 leading-snug">Κώδικας υπολογισμού καθιζήσεων κυκλικών και απειρομήκων θεμελίων</p>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-2 flex-shrink-0">
+            <button onclick="runParametricAnalysis()" class="items-center justify-center gap-2 bg-slate-800 text-purple-300 border border-slate-600 hover:bg-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all flex text-base"><i class="ph-fill ph-strategy"></i> Παραμετρική</button>
+            <button onclick="openTableModal()" class="items-center justify-center gap-2 bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all flex text-base"><i class="ph-fill ph-table"></i> Πίνακας</button>
+            <button onclick="openHeatmap()" id="btn-heatmap" class="items-center justify-center gap-2 bg-slate-800 text-sky-300 border border-slate-600 hover:bg-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all disabled:opacity-50 flex text-base" disabled><i class="ph-fill ph-map-trifold"></i> Heatmap</button>
+            <button onclick="solve()" id="btn-solve" class="items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold shadow-md shadow-blue-900 transition-all flex text-base"><i class="ph-fill ph-play"></i> Επίλυση</button>
+        </div>
+    </header>
+
+    <!-- MAIN SPLIT LAYOUT (Flex row to guarantee same height) -->
+    <div class="flex flex-row flex-1 min-h-0 gap-3">
+        
+        <!-- LEFT COLUMN: Parameters (Fixed Width 380px, scrollable inside) -->
+        <div class="w-[380px] flex-shrink-0 flex flex-col gap-3 overflow-y-auto custom-scroll pr-1">
+            
+            <!-- PANEL 1: Φόρτιση -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex-shrink-0">
+                <h2 class="text-lg font-bold flex items-center gap-2 mb-4 text-slate-700"><i class="ph-fill ph-gear text-blue-500"></i> Φόρτιση & Πέδιλο</h2>
+                <div class="space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-slate-500 mb-1 font-bold text-sm">Είδος Φόρτισης</label>
+                            <select id="p-type" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" onchange="updateParam('type', this.value)">
+                                <option value="axisymmetric">Αξονοσυμμ.</option>
+                                <option value="plane_strain">Επίπεδη Π.</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-slate-500 mb-1 font-bold text-sm">Πλέγμα</label>
+                            <select id="p-mesh" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" onchange="updateParam('meshSize', parseInt(this.value))">
+                                <option value="40">40x40</option>
+                                <option value="80">80x80</option>
+                                <option value="120">120x120</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-slate-500 mb-1 font-bold text-sm">q (kPa)</label>
+                            <input type="number" id="p-q" class="w-full p-2 bg-slate-50 text-sm border border-slate-200 rounded-lg" oninput="updateParam('q', parseFloat(this.value))">
+                        </div>
+                        <div>
+                            <label id="label-D" class="block text-slate-500 mb-1 font-bold text-sm">Διάμετρος(m)</label>
+                            <input type="number" step="0.1" id="p-D" class="w-full p-2 bg-slate-50 text-sm border border-slate-200 rounded-lg" oninput="updateParam('D', parseFloat(this.value))">
+                        </div>
+                        <div>
+                            <label class="block text-slate-500 mb-1 font-bold text-sm">Zmax (m)</label>
+                            <input type="number" step="0.5" id="p-maxDepth" class="w-full p-2 bg-slate-100 text-sm border border-slate-200 rounded-lg text-slate-500 cursor-not-allowed outline-none" readonly>
+                        </div>
+                    </div>
+                    <div class="pt-2 border-t border-slate-100">
+                        <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-700 text-sm">
+                            <input type="checkbox" id="p-isRigid" class="w-4 h-4 text-blue-600 rounded" onchange="updateParam('isRigid', this.checked)">
+                            Άκαμπτη Πλάκα
+                        </label>
+                    </div>
+                    <div id="rigid-params" class="grid grid-cols-2 gap-3 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                        <div>
+                            <label class="block text-slate-500 mb-1 text-xs font-bold">Αξονική (EA)</label>
+                            <input type="number" id="p-EA" class="w-full p-1.5 text-xs bg-white border border-slate-200 rounded" oninput="updateParam('EA', parseFloat(this.value))">
+                        </div>
+                        <div>
+                            <label class="block text-slate-500 mb-1 text-xs font-bold">Καμπτική (EI)</label>
+                            <input type="number" id="p-EI" class="w-full p-1.5 text-xs bg-white border border-slate-200 rounded" oninput="updateParam('EI', parseFloat(this.value))">
+                        </div>
+                        <div class="col-span-2">
+                            <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-700 font-bold">
+                                <input type="checkbox" id="p-fixRot" class="w-3 h-3 text-blue-600" onchange="updateParam('fixRotation', this.checked)"> Περιορισμός στροφής άκρου
+                            </label>
+                        </div>
+                        <div class="col-span-2 mt-1 border-t border-blue-100 pt-2">
+                            <label class="block text-slate-500 text-xs font-bold mb-1">Συντελεστής Επαφής a (Interface)</label>
+                            <div class="flex items-center gap-2">
+                                <input type="range" id="p-interA" min="0" max="1" step="0.05" class="flex-1 h-1.5" oninput="updateParam('interfaceA', parseFloat(this.value))">
+                                <span id="val-interA" class="font-bold text-slate-700 text-xs w-6">1.0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="rigid-corr-row" class="pt-1">
+                        <label class="flex items-center gap-2 cursor-pointer text-sm font-bold text-slate-700">
+                            <input type="checkbox" id="p-applyPi4" class="w-4 h-4 text-blue-600 rounded" onchange="updateParam('applyPi4', this.checked)"> <span id="rigid-corr-label">Διόρθωση άκαμπτου × π/4 (Bouss. & n:1)</span>
+                        </label>
+                        <div id="rigid-corr-info" class="text-xs text-slate-500 mt-1 ml-6 leading-snug"></div>
+                    </div>
+                    <div class="pt-1">
+                        <label class="flex items-center gap-2 cursor-pointer text-sm font-bold text-purple-700">
+                            <input type="checkbox" id="p-useOdemark" class="w-4 h-4 text-purple-600 rounded" onchange="updateParam('useOdemark', this.checked)"> Μέθοδος Odemark (MET για Boussinesq)
+                        </label>
+                    </div>
+                    <div class="pt-2 border-t border-slate-100">
+                        <label class="block text-slate-500 mb-1 font-bold text-sm">Λόγος Μεθόδου n:1</label>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="p-nRatio" min="1" max="3" step="0.1" class="flex-1 h-2" oninput="updateParam('nRatio', parseFloat(this.value))">
+                            <span id="val-nRatio" class="font-bold text-slate-700 text-sm w-8 text-right">2:1</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PANEL 2: Προφίλ -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex-1 flex flex-col min-h-[250px]">
+                <h2 class="text-lg font-bold flex items-center gap-2 mb-4 text-slate-700"><i class="ph-fill ph-layers text-emerald-500"></i> Εδαφικό Προφίλ E(z)</h2>
+                
+                <div class="mb-4">
+                    <label class="block text-sm font-bold text-slate-500 mb-1 uppercase tracking-wide">Μοντέλο Ελαστικότητας</label>
+                    <select id="p-profMode" onchange="updateProfileMode(this.value)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 outline-none">
+                        <option value="linear_freeze">Γραμμικό με Βάθος Παγώματος</option>
+                        <option value="exponential">Εκθετικό - Ασύμπτωτο</option>
+                        <option value="layered">Πολλαπλές Στρώσεις (Custom)</option>
+                    </select>
+                </div>
+
+                <!-- Linear Params -->
+                <div id="prof-linear" class="grid grid-cols-2 gap-3 mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">E_top (MPa)</label><input id="p-lin-Etop" type="number" step="0.1" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('ETop', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 text-blue-600 mb-0.5">Κλίση k (MPa/m)</label><input id="p-lin-k" type="number" step="0.1" class="w-full p-1.5 text-sm border border-blue-300 bg-blue-50 rounded font-bold" oninput="updateProfileParam('k', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">Βάθος Όριο (m)</label><input id="p-lin-freeze" type="number" step="0.5" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('freezeRatio', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">Poisson (ν)</label><input id="p-lin-nu" type="number" step="0.05" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('nu', this.value)"></div>
+                </div>
+
+                <!-- Exponential Params -->
+                <div id="prof-exp" class="grid grid-cols-2 gap-3 mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200 hidden">
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">E_top (MPa)</label><input id="p-exp-Etop" type="number" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('ETop', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">E_ult (MPa)</label><input id="p-exp-Eult" type="number" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('Eult', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">Καμπυλότητα α</label><input id="p-exp-a" type="number" step="0.1" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('a', this.value)"></div>
+                    <div><label class="block text-xs font-bold text-slate-500 mb-0.5">Poisson (ν)</label><input id="p-exp-nu" type="number" step="0.05" class="w-full p-1.5 text-sm border rounded font-bold" oninput="updateProfileParam('nu', this.value)"></div>
+                </div>
+
+                <button id="btn-discretize" onclick="discretizeProfile()" class="w-full py-2 bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-colors mb-3 flex items-center justify-center gap-2">
+                    <i class="ph-bold ph-scissors"></i> Διακριτοποίηση (5 Στρ.)
+                </button>
+
+                <!-- Layered Editor -->
+                <div id="prof-layered" class="flex flex-col flex-1 hidden min-h-0">
+                    <div class="bg-blue-50 p-2.5 rounded-lg border border-blue-100 text-xs text-blue-800 mb-3 font-medium flex-shrink-0">
+                        <i class="ph-fill ph-info inline-block mr-1"></i> Ορίστε πάχος, E και ν ανά στρώση. Το τελικό βάθος (Zmax) προκύπτει αυτόματα από το άθροισμα των παχών.
+                    </div>
+                    <div class="flex gap-3 flex-1 min-h-0">
+                        <div id="profile-area" class="w-12 relative bg-slate-100 rounded-lg overflow-hidden border border-slate-300 shadow-inner"></div>
+                        <div id="layers-list" class="flex-1 space-y-2 overflow-y-auto pr-1 custom-scroll"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Charts Area (Takes up all remaining width, flex-1) -->
+        <div class="flex-1 flex flex-col min-w-0 gap-3">
+            
+            <!-- Controls Bar (Top row of right column) -->
+            <div class="flex-shrink-0 bg-white p-3 rounded-2xl shadow-sm border border-slate-200 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <label class="text-xs font-black text-slate-700 uppercase tracking-wide flex items-center">
+                        <i class="ph-fill ph-chart-line-up text-blue-500 mr-2 text-xl"></i> Καμπυλες
+                    </label>
+                    <div class="flex flex-wrap gap-2" id="curves-toggles"></div>
+                </div>
+                <div class="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200 flex-shrink-0">
+                    <span class="text-xs font-bold text-slate-500 uppercase px-1">Κλιμακες</span>
+                    <input type="number" id="chart-max-set" class="w-16 p-1.5 text-xs border rounded bg-white font-bold" placeholder="X: Auto" onchange="updateChartSettings('maxSet', this.value)" title="Μέγιστη Καθίζηση X">
+                    <input type="number" id="chart-max-depth" class="w-16 p-1.5 text-xs border rounded bg-white font-bold" placeholder="Z: Auto" onchange="updateChartSettings('maxDepthView', this.value)" title="Μέγιστο Βάθος Z">
+                </div>
+            </div>
+
+            <!-- 4 CHARTS GRID -->
+            <div class="flex-1 bg-white p-3 rounded-2xl shadow-sm border border-slate-200 flex flex-col min-h-0 relative">
+                <!-- ALL 4 CHARTS IN ONE ROW (grid-cols-4) taking full height (h-full) -->
+                <div id="charts-wrapper" class="grid grid-cols-4 gap-3 h-full min-h-0 w-full overflow-hidden">
+                    <div class="col-span-full flex flex-col items-center justify-center text-slate-400 py-10 h-full">
+                        <i class="ph-fill ph-activity text-5xl opacity-50 mb-4"></i>
+                        <span>Εκκίνηση Επίλυσης...</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MAIN LOGIC -->
+    <script>
+        class SparseMatrix {
+            constructor(size) {
+                this.size = size;
+                this.data = new Map();
+            }
+            add(i, j, val) {
+                if (!this.data.has(i)) this.data.set(i, new Map());
+                const row = this.data.get(i);
+                row.set(j, (row.get(j) || 0) + val);
+            }
+            get(i, j) {
+                return this.data.has(i) ? (this.data.get(i).get(j) || 0) : 0;
+            }
+            multiply(x) {
+                let res = new Float64Array(this.size);
+                for (let [i, row] of this.data.entries()) {
+                    let sum = 0;
+                    for (let [j, val] of row.entries()) sum += val * x[j];
+                    res[i] = sum;
+                }
+                return res;
+            }
+        }
+
+        function solveCG(A, b, maxIter = 5000, tol = 1e-6) {
+            const n = b.length;
+            let x = new Float64Array(n);
+            let r = new Float64Array(b);
+            let p = new Float64Array(n);
+            let z = new Float64Array(n);
+            let M_inv = new Float64Array(n);
+            for (let i = 0; i < n; i++) {
+                let diag = A.get(i, i);
+                M_inv[i] = diag === 0 ? 1 : 1 / diag;
+            }
+            for (let i = 0; i < n; i++) z[i] = r[i] * M_inv[i];
+            for (let i = 0; i < n; i++) p[i] = z[i];
+            let rz_old = 0;
+            for (let i = 0; i < n; i++) rz_old += r[i] * z[i];
+            for (let iter = 0; iter < maxIter; iter++) {
+                let Ap = A.multiply(p);
+                let pAp = 0;
+                for (let i = 0; i < n; i++) pAp += p[i] * Ap[i];
+                if (pAp === 0) break;
+                let alpha = rz_old / pAp;
+                for (let i = 0; i < n; i++) { x[i] += alpha * p[i]; r[i] -= alpha * Ap[i]; }
+                let r_norm = 0;
+                for (let i = 0; i < n; i++) r_norm += r[i] * r[i];
+                if (Math.sqrt(r_norm) < tol) break;
+                for (let i = 0; i < n; i++) z[i] = r[i] * M_inv[i];
+                let rz_new = 0;
+                for (let i = 0; i < n; i++) rz_new += r[i] * z[i];
+                let beta = rz_new / rz_old;
+                for (let i = 0; i < n; i++) p[i] = z[i] + beta * p[i];
+                rz_old = rz_new;
+            }
+            return x;
+        }
+
+        function getMaterialAt(y, params, profileState, layers) {
+            if (profileState.mode === 'linear_freeze') {
+                const z_eff = Math.min(y, profileState.freezeRatio);
+                const E = profileState.ETop + profileState.k * z_eff;
+                return { E: Math.max(1, E), nu: profileState.nu };
+            } else if (profileState.mode === 'exponential') {
+                const E = profileState.Eult - (profileState.Eult - profileState.ETop) * Math.exp(-profileState.a * y);
+                return { E: Math.max(1, E), nu: profileState.nu };
+            } else {
+                if (!layers || layers.length === 0) return { E: 1, nu: 0.3 };
+                let zAcc = 0;
+                for (let layer of layers) {
+                    zAcc += layer.thickness;
+                    if (y <= zAcc + 1e-9) return { E: Math.max(1, layer.E), nu: layer.nu };
+                }
+                const last = layers[layers.length - 1];
+                return { E: Math.max(1, last.E), nu: last.nu };
+            }
+        }
+
+        // Total depth of the custom/layered profile = sum of the individual layer thicknesses.
+        function getLayersTotalDepth(layers) {
+            return (layers || []).reduce((sum, l) => sum + (l.thickness || 0), 0);
+        }
+
+        // Keeps the read-only "Zmax" display in sync with the current profile.
+        function syncMaxDepthDisplay() {
+            const el = document.getElementById('p-maxDepth');
+            if (el) el.value = state.params.maxDepth.toFixed(1);
+        }
+
+        class GeotechFEM {
+            constructor(params, profile, layers) {
+                this.params = params;
+                this.profile = profile;
+                this.layers = layers;
+                this.H = params.maxDepth;
+                this.W = params.type === 'axisymmetric' ? params.D * 8 : params.D * 12; 
+                this.nx = params.meshSize || 40; 
+                this.ny = params.meshSize || 40;
+                this.nodes = [];
+                this.elements = [];
+                this.dofsPerNode = 4; 
+                this.generateMesh();
+            }
+
+            generateMesh() {
+                const R = this.params.D / 2;
+                const n_in = Math.max(10, Math.floor(this.nx * 0.25)); 
+                const n_out = this.nx - n_in;
+
+                let x_pts = [];
+                for (let i = 0; i <= n_in; i++) {
+                    let xi = i / n_in;
+                    let val = R * (1 - Math.pow(1 - xi, 1.5));
+                    x_pts.push(val);
+                }
+                for (let i = 1; i <= n_out; i++) {
+                    let xi = i / n_out;
+                    let val = R + (this.W - R) * Math.pow(xi, 1.8);
+                    x_pts.push(val);
+                }
+
+                let y_pts = [];
+                for (let j = 0; j <= this.ny; j++) {
+                    let xi = j / this.ny;
+                    let val = this.H * Math.pow(xi, 1.6);
+                    y_pts.push(val);
+                }
+                
+                for (let j = 0; j <= this.ny; j++) {
+                    for (let i = 0; i <= this.nx; i++) {
+                        this.nodes.push({ x: x_pts[i], y: y_pts[j] });
+                    }
+                }
+                for (let j = 0; j < this.ny; j++) {
+                    for (let i = 0; i < this.nx; i++) {
+                        let n1 = j * (this.nx + 1) + i;
+                        let n2 = n1 + 1;
+                        let n3 = n2 + (this.nx + 1);
+                        let n4 = n1 + (this.nx + 1);
+                        let cy = (this.nodes[n1].y + this.nodes[n2].y + this.nodes[n3].y + this.nodes[n4].y) / 4;
+                        let mat = getMaterialAt(cy, this.params, this.profile, this.layers);
+                        this.elements.push({ nodes: [n1, n2, n3, n4], E: mat.E, nu: mat.nu });
+                    }
+                }
+            }
+
+            getQ4Stiffness(el) {
+                const isAxis = this.params.type === 'axisymmetric';
+                const K = Array(8).fill(0).map(() => Array(8).fill(0));
+                const E = el.E, nu = el.nu;
+                const coeff = E / ((1 + nu) * (1 - 2 * nu));
+                let D = isAxis ? [
+                    [coeff * (1 - nu), coeff * nu, coeff * nu, 0],
+                    [coeff * nu, coeff * (1 - nu), coeff * nu, 0],
+                    [coeff * nu, coeff * nu, coeff * (1 - nu), 0],
+                    [0, 0, 0, coeff * (0.5 - nu)]
+                ] : [
+                    [coeff * (1 - nu), coeff * nu, 0],
+                    [coeff * nu, coeff * (1 - nu), 0],
+                    [0, 0, coeff * (0.5 - nu)]
+                ];
+
+                const pts = [-1/Math.sqrt(3), 1/Math.sqrt(3)];
+                for (let r of pts) {
+                    for (let s of pts) {
+                        const dNdr = [-0.25*(1-s), 0.25*(1-s), 0.25*(1+s), -0.25*(1+s)];
+                        const dNds = [-0.25*(1-r), -0.25*(1+r), 0.25*(1+r), 0.25*(1-r)];
+                        const N = [0.25*(1-r)*(1-s), 0.25*(1+r)*(1-s), 0.25*(1+r)*(1+s), 0.25*(1-r)*(1+s)];
+
+                        let J = [[0, 0], [0, 0]], radius = 0;
+                        for (let i = 0; i < 4; i++) {
+                            let node = this.nodes[el.nodes[i]];
+                            J[0][0] += dNdr[i] * node.x; J[0][1] += dNdr[i] * node.y;
+                            J[1][0] += dNds[i] * node.x; J[1][1] += dNds[i] * node.y;
+                            radius += N[i] * node.x;
+                        }
+                        let detJ = J[0][0]*J[1][1] - J[0][1]*J[1][0];
+                        if (detJ <= 0) continue; 
+                        let invJ = [[J[1][1]/detJ, -J[0][1]/detJ], [-J[1][0]/detJ, J[0][0]/detJ]];
+
+                        let dNdx = [], dNdy = [];
+                        for (let i = 0; i < 4; i++) {
+                            dNdx.push(invJ[0][0]*dNdr[i] + invJ[0][1]*dNds[i]);
+                            dNdy.push(invJ[1][0]*dNdr[i] + invJ[1][1]*dNds[i]);
+                        }
+
+                        let B = isAxis ? Array(4).fill(0).map(() => Array(8).fill(0)) : Array(3).fill(0).map(() => Array(8).fill(0));
+                        for (let i = 0; i < 4; i++) {
+                            B[0][2*i] = dNdx[i]; B[1][2*i+1] = dNdy[i];
+                            if(isAxis) {
+                                B[2][2*i] = radius > 1e-6 ? N[i] / radius : 0;
+                                B[3][2*i] = dNdy[i]; B[3][2*i+1] = dNdx[i];
+                            } else {
+                                B[2][2*i] = dNdy[i]; B[2][2*i+1] = dNdx[i];
+                            }
+                        }
+
+                        let weight = detJ * (isAxis ? 2 * Math.PI * radius : 1);
+                        for (let i = 0; i < 8; i++) {
+                            for (let j = 0; j < 8; j++) {
+                                let val = 0;
+                                for (let k = 0; k < D.length; k++) {
+                                    for (let l = 0; l < D.length; l++) val += B[k][i] * D[k][l] * B[l][j];
+                                }
+                                K[i][j] += val * weight;
+                            }
+                        }
+                    }
+                }
+                return K;
+            }
+
+            getBeamStiffness(n1, n2, r_avg) {
+                const L = Math.abs(this.nodes[n2].x - this.nodes[n1].x);
+                if (L < 1e-6) return null;
+                const mult = this.params.type === 'axisymmetric' ? 2 * Math.PI * r_avg : 1;
+                let EA = this.params.EA * mult, EI = this.params.EI * mult;
+                return [
+                    [EA/L, 0, 0, -EA/L, 0, 0],
+                    [0, 12*EI/(L*L*L), 6*EI/(L*L), 0, -12*EI/(L*L*L), 6*EI/(L*L)],
+                    [0, 6*EI/(L*L), 4*EI/L, 0, -6*EI/(L*L), 2*EI/L],
+                    [-EA/L, 0, 0, EA/L, 0, 0],
+                    [0, -12*EI/(L*L*L), -6*EI/(L*L), 0, 12*EI/(L*L*L), -6*EI/(L*L)],
+                    [0, 6*EI/(L*L), 2*EI/L, 0, -6*EI/(L*L), 4*EI/L]
+                ];
+            }
+
+            solve() {
+                const nDofs = this.nodes.length * this.dofsPerNode;
+                const K = new SparseMatrix(nDofs);
+                const F = new Float64Array(nDofs);
+
+                for (let el of this.elements) {
+                    const k_el = this.getQ4Stiffness(el);
+                    for (let i = 0; i < 4; i++) {
+                        for (let j = 0; j < 4; j++) {
+                            let gi = el.nodes[i] * 4, gj = el.nodes[j] * 4;
+                            K.add(gi, gj, k_el[2*i][2*j]); 
+                            K.add(gi, gj+1, k_el[2*i][2*j+1]);
+                            K.add(gi+1, gj, k_el[2*i+1][2*j]); 
+                            K.add(gi+1, gj+1, k_el[2*i+1][2*j+1]);
+                        }
+                    }
+                }
+
+                const loadRadius = this.params.D / 2;
+                const isAxis = this.params.type === 'axisymmetric';
+                let lastLoadedNodeIdx = -1;
+
+                for (let i = 0; i < this.nx; i++) {
+                    let n1 = i, n2 = i + 1;
+                    let x1 = this.nodes[n1].x, x2 = this.nodes[n2].x;
+                    if (x1 < loadRadius + 1e-4) {
+                        let L = Math.min(x2, loadRadius) - x1;
+                        if (L > 0) {
+                            let x_end = x1 + L;
+                            let F1 = 0, F2 = 0;
+                            
+                            if (isAxis) {
+                                F1 = Math.PI * this.params.q * L * (2 * x1 + x_end) / 3;
+                                F2 = Math.PI * this.params.q * L * (x1 + 2 * x_end) / 3;
+                            } else {
+                                F1 = this.params.q * L / 2;
+                                F2 = this.params.q * L / 2;
+                            }
+                            
+                            F[n1 * 4 + 1] += F1; 
+                            F[n2 * 4 + 1] += F2;
+                            
+                            let r_avg = x1 + L/2;
+                            if (this.params.isRigid) {
+                                const k_beam = this.getBeamStiffness(n1, n2, r_avg);
+                                if (k_beam) {
+                                    const dofs = [n1*4+2, n1*4+1, n1*4+3, n2*4+2, n2*4+1, n2*4+3];
+                                    for (let r=0; r<6; r++) for (let c=0; c<6; c++) K.add(dofs[r], dofs[c], k_beam[r][c]);
+                                }
+                            }
+                            lastLoadedNodeIdx = n2;
+                        }
+                    }
+                }
+
+                if (this.params.isRigid && lastLoadedNodeIdx >= 0) {
+                    let Ks_base = 1e9; 
+                    let Ks = Ks_base * this.params.interfaceA;
+                    if (this.params.interfaceA < 0.01) Ks = 0; 
+                    
+                    for (let i = 0; i <= lastLoadedNodeIdx; i++) {
+                        let r_node = this.nodes[i].x;
+                        let mult = (this.params.type === 'axisymmetric') ? 2 * Math.PI * Math.max(r_node, 1e-3) : 1;
+                        let val = Ks * mult;
+                        if (val > 0) {
+                            K.add(i*4, i*4, val);           
+                            K.add(i*4+2, i*4+2, val);       
+                            K.add(i*4, i*4+2, -val);        
+                            K.add(i*4+2, i*4, -val);        
+                        }
+                    }
+                }
+
+                for (let i = 0; i < this.nodes.length; i++) {
+                    let isLoaded = (i <= lastLoadedNodeIdx);
+                    if (!this.params.isRigid || !isLoaded) {
+                        K.add(i*4 + 2, i*4 + 2, 1.0); 
+                        K.add(i*4 + 3, i*4 + 3, 1.0); 
+                    }
+                }
+
+                const fixedDofs = new Set();
+                for (let i = 0; i < this.nodes.length; i++) {
+                    let n = this.nodes[i];
+                    if (Math.abs(n.x) < 1e-6) {
+                        fixedDofs.add(i * 4);     
+                        fixedDofs.add(i * 4 + 2); 
+                    }
+                    if (Math.abs(n.x - this.W) < 1e-6) fixedDofs.add(i * 4);
+                    if (Math.abs(n.y - this.H) < 1e-6) { fixedDofs.add(i * 4); fixedDofs.add(i * 4 + 1); }
+                }
+                if (this.params.isRigid && this.params.fixRotation && lastLoadedNodeIdx !== -1) {
+                    fixedDofs.add(lastLoadedNodeIdx * 4 + 3);
+                }
+
+                for (let dof of fixedDofs) {
+                    K.data.get(dof).clear(); K.add(dof, dof, 1.0); F[dof] = 0;
+                    for (let i = 0; i < nDofs; i++) {
+                        if (i !== dof && K.data.has(i) && K.data.get(i).has(dof)) K.data.get(i).set(dof, 0);
+                    }
+                }
+
+                const U = solveCG(K, F);
+
+                let magU = new Float64Array(this.nodes.length);
+                for(let i=0; i<this.nodes.length; i++) {
+                    let dx = U[i*4], dy = U[i*4+1];
+                    magU[i] = Math.sqrt(dx*dx + dy*dy) * 1000;
+                }
+
+                let nodalStrainX = new Float64Array(this.nodes.length);
+                let nodalStrainY = new Float64Array(this.nodes.length);
+                let nodalGammaXY = new Float64Array(this.nodes.length);
+                let nodeCount = new Int32Array(this.nodes.length);
+
+                const a = Math.sqrt(3);
+                const extW = [
+                    [ (1+a)*(1+a)/4, (1-a)*(1+a)/4, (1-a)*(1-a)/4, (1+a)*(1-a)/4 ],
+                    [ (1-a)*(1+a)/4, (1+a)*(1+a)/4, (1+a)*(1-a)/4, (1-a)*(1-a)/4 ],
+                    [ (1-a)*(1-a)/4, (1+a)*(1-a)/4, (1+a)*(1+a)/4, (1-a)*(1+a)/4 ],
+                    [ (1+a)*(1-a)/4, (1-a)*(1-a)/4, (1-a)*(1+a)/4, (1+a)*(1+a)/4 ]
+                ];
+                const gpts = [[-1/a, -1/a], [1/a, -1/a], [1/a, 1/a], [-1/a, 1/a]];
+
+                for (let i = 0; i < this.elements.length; i++) {
+                    let el = this.elements[i];
+                    let ux = [], uy = [];
+                    for(let k=0; k<4; k++) {
+                        let nIdx = el.nodes[k];
+                        ux.push(U[nIdx*4]); uy.push(U[nIdx*4+1]); 
+                    }
+                    
+                    let ex_g = [0,0,0,0], ey_g = [0,0,0,0], gxy_g = [0,0,0,0];
+                    
+                    for(let g=0; g<4; g++) {
+                        let r = gpts[g][0], s = gpts[g][1];
+                        const dNdr = [-0.25*(1-s), 0.25*(1-s), 0.25*(1+s), -0.25*(1+s)];
+                        const dNds = [-0.25*(1-r), -0.25*(1+r), 0.25*(1+r), 0.25*(1-r)];
+                        
+                        let J00=0, J01=0, J10=0, J11=0;
+                        for(let k=0; k<4; k++) {
+                            let node = this.nodes[el.nodes[k]];
+                            J00 += dNdr[k] * node.x; J01 += dNdr[k] * node.y;
+                            J10 += dNds[k] * node.x; J11 += dNds[k] * node.y;
+                        }
+                        let detJ = J00*J11 - J01*J10;
+                        if(detJ <= 0) continue;
+                        let invJ = [[J11/detJ, -J01/detJ], [-J10/detJ, J00/detJ]];
+                        
+                        let ex=0, ey=0, gxy=0;
+                        for(let k=0; k<4; k++) {
+                            let dNdx = invJ[0][0]*dNdr[k] + invJ[0][1]*dNds[k];
+                            let dNdy = invJ[1][0]*dNdr[k] + invJ[1][1]*dNds[k];
+                            ex += dNdx * ux[k]; 
+                            ey += dNdy * uy[k];
+                            gxy += dNdx * uy[k] + dNdy * ux[k];
+                        }
+                        ex_g[g] = -ex; ey_g[g] = -ey; gxy_g[g] = -gxy;
+                    }
+                    
+                    for(let n=0; n<4; n++) {
+                        let ex_node = 0, ey_node = 0, gxy_node = 0;
+                        for(let g=0; g<4; g++) {
+                            ex_node += extW[n][g] * ex_g[g];
+                            ey_node += extW[n][g] * ey_g[g];
+                            gxy_node += extW[n][g] * gxy_g[g];
+                        }
+                        let nIdx = el.nodes[n];
+                        nodalStrainX[nIdx] += ex_node;
+                        nodalStrainY[nIdx] += ey_node;
+                        nodalGammaXY[nIdx] += gxy_node;
+                        nodeCount[nIdx]++;
+                    }
+                }
+                
+                for(let i=0; i<this.nodes.length; i++) {
+                    if(nodeCount[i] > 0) {
+                        nodalStrainX[i] /= nodeCount[i];
+                        nodalStrainY[i] /= nodeCount[i];
+                        nodalGammaXY[i] /= nodeCount[i];
+                    }
+                }
+
+                let epsX_arr = new Float64Array(this.elements.length);
+                let epsY_arr = new Float64Array(this.elements.length);
+                let gammaXY_arr = new Float64Array(this.elements.length);
+                const surfaceStress = new Float64Array(this.nx);
+
+                const depths = [], femSet = [], femStress = [], femStrain = [];
+                for (let j = 0; j <= this.ny; j++) {
+                    let n_idx = j * (this.nx + 1); 
+                    let nodeY = this.nodes[n_idx].y;
+                    depths.push(nodeY); 
+                    femSet.push(U[n_idx*4 + 1] * 1000);
+                    
+                    let ey = nodalStrainY[n_idx];
+                    let ex = nodalStrainX[n_idx];
+                    femStrain.push(ey);
+                    
+                    let mat = getMaterialAt(nodeY, this.params, this.profile, this.layers);
+                    const coeff = mat.E / ((1 + mat.nu) * (1 - 2 * mat.nu));
+                    let sz = this.params.type === 'axisymmetric' 
+                        ? coeff * ((1 - mat.nu) * ey + 2 * mat.nu * ex) 
+                        : coeff * ((1 - mat.nu) * ey + mat.nu * ex);
+                    femStress.push(sz);
+                }
+
+                for (let i = 0; i < this.nx; i++) {
+                    let mat = getMaterialAt(0, this.params, this.profile, this.layers);
+                    const coeff = mat.E / ((1 + mat.nu) * (1 - 2 * mat.nu));
+                    surfaceStress[i] = this.params.type === 'axisymmetric' 
+                        ? coeff * ((1 - mat.nu) * nodalStrainY[i] + 2 * mat.nu * nodalStrainX[i]) 
+                        : coeff * ((1 - mat.nu) * nodalStrainY[i] + mat.nu * nodalStrainX[i]);
+                    
+                    let el = this.elements[i];
+                    epsY_arr[i] = (nodalStrainY[el.nodes[0]]+nodalStrainY[el.nodes[1]]+nodalStrainY[el.nodes[2]]+nodalStrainY[el.nodes[3]])/4;
+                    epsX_arr[i] = (nodalStrainX[el.nodes[0]]+nodalStrainX[el.nodes[1]]+nodalStrainX[el.nodes[2]]+nodalStrainX[el.nodes[3]])/4;
+                    gammaXY_arr[i] = (nodalGammaXY[el.nodes[0]]+nodalGammaXY[el.nodes[1]]+nodalGammaXY[el.nodes[2]]+nodalGammaXY[el.nodes[3]])/4;
+                }
+
+                return { 
+                    depths, femSet, femStress, femStrain, 
+                    U, magU, epsX_arr, epsY_arr, gammaXY_arr, surfaceStress, nx: this.nx
+                };
+            }
+        }
+
+        function calculateAnalytical(params, profile, layers, depths) {
+            const isAxis = params.type === 'axisymmetric', q = params.q, R = params.D / 2, n = params.nRatio;
+            const res = { bE: [], n1E: [], stressB: [], stressN1: [], strainB_E: [], strainN1_E: [] };
+            let dz_arr = [];
+            for (let i=0; i<depths.length-1; i++) dz_arr.push(depths[i+1] - depths[i]);
+
+            const midProps = depths.slice(0, -1).map((d, i) => {
+                const z = (d + depths[i+1])/2;
+                return getMaterialAt(z, params, profile, layers);
+            });
+
+            let eps_bE=[], eps_nE=[], sz_b_arr=[], sz_n1_arr=[];
+            let sum_h_E13 = 0;
+
+            midProps.forEach((props, i) => {
+                const z_mid = (depths[i] + depths[i+1])/2;
+                const dz = dz_arr[i];
+                const {E, nu} = props;
+                let z_eff = z_mid;
+                
+                if (params.useOdemark) {
+                    z_eff = (sum_h_E13 / Math.pow(E, 1/3)) + (dz / 2);
+                }
+
+                let sz_b, sr_b, sx_b, sy_b, sz_n1;
+                if (isAxis) {
+                    if (z_eff === 0) { sz_b = q; sr_b = q*(1+2*nu)/2; }
+                    else {
+                        const den = Math.pow(R*R + z_eff*z_eff, 1.5);
+                        sz_b = q * (1 - Math.pow(z_eff, 3)/den);
+                        sr_b = (q/2) * ((1+2*nu) - 2*(1+nu)*z_eff/Math.sqrt(R*R+z_eff*z_eff) + Math.pow(z_eff,3)/den);
+                    }
+                    eps_bE.push((sz_b - 2*nu*sr_b)/E);
+                    
+                    // n:1 uses explicit z_mid geometry
+                    sz_n1 = q * Math.pow(params.D / (params.D + 2*z_mid/n), 2);
+                    eps_nE.push(sz_n1/E);
+                } else {
+                    if (z_eff === 0) { sz_b = q; sx_b = q; }
+                    else {
+                        const alpha = 2*Math.atan(R/z_eff);
+                        sz_b = (q/Math.PI)*(alpha+Math.sin(alpha)); sx_b = (q/Math.PI)*(alpha-Math.sin(alpha));
+                    }
+                    sy_b = nu*(sx_b+sz_b);
+                    eps_bE.push((sz_b - nu*(sx_b+sy_b))/E);
+                    
+                    // n:1 uses explicit z_mid geometry
+                    sz_n1 = q * (params.D / (params.D + 2*z_mid/n));
+                    eps_nE.push(sz_n1/E);
+                }
+                sz_b_arr.push(sz_b); sz_n1_arr.push(sz_n1);
+                
+                if (params.useOdemark) {
+                    let f = 1.0;
+                    if (i < midProps.length - 1 && E > midProps[i+1].E) f = 0.9; 
+                    sum_h_E13 += f * dz * Math.pow(E, 1/3);
+                }
+            });
+
+            const interp = (arr) => { const r = [arr[0]]; for(let i=1;i<arr.length;i++) r.push((arr[i-1]+arr[i])/2); r.push(arr[arr.length-1]); return r; };
+            res.stressB = interp(sz_b_arr); res.stressN1 = interp(sz_n1_arr);
+            res.strainB_E = interp(eps_bE);
+            res.strainN1_E = interp(eps_nE);
+
+            let s_bE=0, s_nE=0;
+            const N = depths.length;
+            res.bE = Array(N).fill(0); res.n1E = Array(N).fill(0);
+            for (let i = N-2; i >= 0; i--) {
+                s_bE += eps_bE[i]*dz_arr[i]*1000;
+                s_nE += eps_nE[i]*dz_arr[i]*1000;
+                res.bE[i]=s_bE; res.n1E[i]=s_nE;
+            }
+
+            // Rigid-footing correction: only for a rigid footing, and different per geometry
+            if (params.isRigid && params.applyPi4) {
+                const rigidFactor = getRigidCorrection(params, profile, layers).factor;
+                for (let i = 0; i < N; i++) {
+                    res.bE[i] *= rigidFactor;
+                    res.n1E[i] *= rigidFactor;
+                }
+            }
+
+            return res;
+        }
+
+        // Ratio (rigid settlement) / (centre settlement of the flexible footing), homogeneous elastic soil.
+        //  - circle on a half-space: pi/4 (exact).
+        //  - strip: no constant ratio exists. The exact half-space difference is
+        //        s_flex(0) - s_rigid = (2/pi)(1 - ln2) * q*B*(1 - nu^2)/E,
+        //    which, divided by the centre settlement of a flexible strip on a layer of thickness H
+        //    (rough rigid base, strains summed on the axis), gives
+        //        f = 1 - 2(1 - ln2)(1 - nu) / [ (1 - 2nu)(H/B)*alphaH + (1 - nu)*ln(1 + 4H^2/B^2) ],
+        //    alphaH = 2*atan(B/(2H)).  For H < B the value at H = B is kept.
+        function getRigidCorrection(params, profile, layers) {
+            if (params.type === 'axisymmetric') return { factor: Math.PI / 4, hb: null, nu: null };
+            const nu = getMaterialAt(0, params, profile, layers).nu;
+            const hbTrue = params.maxDepth / params.D;
+            const hb = Math.max(1, hbTrue);
+            const alphaH = 2 * Math.atan(1 / (2 * hb));
+            const den = (1 - 2 * nu) * hb * alphaH + (1 - nu) * Math.log(1 + 4 * hb * hb);
+            const factor = 1 - 2 * (1 - Math.LN2) * (1 - nu) / den;
+            return { factor, hb: hbTrue, nu };
+        }
+
+        let state = {
+            params: { type: 'axisymmetric', q: 100, D: 1.0, maxDepth: 6.0, isRigid: true, EA: 1e9, EI: 1e8, fixRotation: true, nRatio: 2.0, applyPi4: true, useOdemark: false, interfaceA: 1.0, meshSize: 40 },
+            profile: { mode: 'linear_freeze', ETop: 10000, k: 500, freezeRatio: 2.0, Eult: 50000, a: 0.5, nu: 0.3 },
+            layers: [],
+            results: null,
+            heatmapData: null,
+            activeCurves: { fem: true, bE: true, n1E: true },
+            hmVar: 'magU',
+            hmScale: {},
+            hmZoomLevel: 0,
+            hmShowMesh: false,
+            hmShowLoad: true,
+            hmMeshColor: '#64748b',
+            hmMeshAlpha: 0.3,
+            hmDefScale: 1.0,
+            showContactStress: false,
+            isSolving: false,
+            chartSettings: { maxSet: null, maxDepthView: null }
+        };
+
+        let solveDebounceTimer = null;
+        let parametricData = null; // Cache for Parametric Analysis
+
+        function scheduleSolve() {
+            const btn = document.getElementById('btn-solve');
+            if (btn && !state.isSolving) {
+                btn.innerHTML = '<i class="ph-bold ph-hourglass-high animate-spin"></i> Υπολογισμός...';
+                btn.classList.add('bg-amber-500', 'hover:bg-amber-600', 'shadow-amber-200');
+                btn.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'shadow-blue-200');
+            }
+            clearTimeout(solveDebounceTimer);
+            solveDebounceTimer = setTimeout(() => { solve(); }, 400);
+        }
+
+        function initApp() {
+            state.params.maxDepth = state.params.type === 'axisymmetric' ? 6 * state.params.D : 12 * state.params.D;
+            state.layers = [{ id: 1, thickness: state.params.maxDepth, E: 10000, nu: 0.3 }];
+            
+            renderInputs();
+            renderToggles();
+            
+            document.getElementById('hm-show-mesh').checked = state.hmShowMesh;
+            document.getElementById('hm-show-load').checked = state.hmShowLoad;
+            document.getElementById('hm-mesh-color').value = state.hmMeshColor;
+            document.getElementById('hm-mesh-alpha').value = state.hmMeshAlpha;
+            document.getElementById('hm-def-scale').value = state.hmDefScale;
+            document.getElementById('hm-def-val').innerText = state.hmDefScale + 'x';
+            
+            solve(); 
+            
+            const canvas = document.getElementById('heatmap-canvas');
+            canvas.addEventListener('mousemove', handleHeatmapHover);
+            canvas.addEventListener('mouseleave', () => { document.getElementById('heatmap-tooltip').style.display = 'none'; });
+            
+            document.addEventListener('mousemove', (e) => {
+                const globalCursor = document.getElementById('global-cursor-line');
+                const globalTt = document.getElementById('global-chart-tooltip');
+                if(!e.target || !e.target.classList || !e.target.classList.contains('plot-area')) {
+                    globalCursor.classList.add('hidden');
+                    globalTt.classList.add('hidden');
+                }
+            });
+        }
+
+        function updateParam(key, val) {
+            state.params[key] = val;
+
+            // Choosing a rigid plate ticks the edge-rotation restraint (symmetry condition) automatically
+            if (key === 'isRigid' && val) {
+                state.params.fixRotation = true;
+                document.getElementById('p-fixRot').checked = true;
+            }
+
+            if (key === 'D' || key === 'type') {
+                if (state.profile.mode === 'layered') {
+                    // Custom profile: total depth comes only from the sum of layer
+                    // thicknesses, and stays fixed regardless of D or foundation type.
+                    state.params.maxDepth = getLayersTotalDepth(state.layers);
+                } else {
+                    state.params.maxDepth = state.params.type === 'axisymmetric' ? 6 * state.params.D : 12 * state.params.D;
+                }
+                syncMaxDepthDisplay();
+                if (state.profile.mode === 'layered') renderLayers();
+            }
+
+            if (key === 'type') document.getElementById('label-D').innerText = val === 'axisymmetric' ? 'Διάμετρος(m)' : 'Πλάτος(m)';
+            if (key === 'interfaceA') document.getElementById('val-interA').innerText = val.toFixed(2);
+            if (key === 'nRatio') document.getElementById('val-nRatio').innerText = val.toFixed(1) + ':1';
+            
+            renderToggles();
+            scheduleSolve();
+        }
+
+        function updateProfileMode(mode) {
+            state.profile.mode = mode;
+            document.getElementById('prof-linear').classList.toggle('hidden', mode !== 'linear_freeze');
+            document.getElementById('prof-exp').classList.toggle('hidden', mode !== 'exponential');
+            document.getElementById('prof-layered').classList.toggle('hidden', mode !== 'layered');
+            document.getElementById('btn-discretize').classList.toggle('hidden', mode === 'layered');
+            
+            if (mode === 'layered') {
+                state.params.maxDepth = getLayersTotalDepth(state.layers);
+                renderLayers();
+            } else {
+                state.params.maxDepth = state.params.type === 'axisymmetric' ? 6 * state.params.D : 12 * state.params.D;
+            }
+            syncMaxDepthDisplay();
+            scheduleSolve();
+        }
+
+        function updateProfileParam(key, val) {
+            let parsed = parseFloat(val) || 0;
+            if (key === 'ETop' || key === 'Eult') parsed *= 1000;
+            if (key === 'k') parsed *= 1000;
+            
+            state.profile[key] = parsed;
+            scheduleSolve();
+        }
+
+        function discretizeProfile() {
+            const maxDepth = state.params.maxDepth;
+            const numLayers = 5;
+            const dz = maxDepth / numLayers;
+            const newLayers = [];
+            for(let i=0; i<numLayers; i++) {
+                const zTop = i * dz;
+                const zBot = (i+1) * dz;
+                const zMid = (zTop + zBot) / 2;
+                const matMid = getMaterialAt(zMid, state.params, state.profile, state.layers);
+                newLayers.push({ id: i+1, thickness: dz, E: Math.round(matMid.E), nu: matMid.nu });
+            }
+            state.layers = newLayers;
+            document.getElementById('p-profMode').value = 'layered';
+            updateProfileMode('layered');
+        }
+
+        function updateLayer(idx, field, valStr) {
+            let val = parseFloat(valStr) || 0;
+            if (field === 'E') val = Math.round(val * 1000);
+            if (field === 'thickness') val = Math.max(0.01, val);
+            state.layers[idx][field] = val;
+
+            if (field === 'thickness') {
+                state.params.maxDepth = getLayersTotalDepth(state.layers);
+                syncMaxDepthDisplay();
+                renderLayers();
+            }
+            scheduleSolve();
+        }
+
+        function addLayer() {
+            const newId = state.layers.length > 0 ? Math.max(...state.layers.map(l => l.id)) + 1 : 1;
+            const last = state.layers[state.layers.length - 1];
+            state.layers.push({ id: newId, thickness: 1.0, E: last ? last.E : 10000, nu: last ? last.nu : 0.3 });
+            state.params.maxDepth = getLayersTotalDepth(state.layers);
+            syncMaxDepthDisplay();
+            renderLayers();
+            scheduleSolve();
+        }
+
+        function removeLayer(idx) {
+            if (state.layers.length <= 1) return;
+            state.layers.splice(idx, 1);
+            state.params.maxDepth = getLayersTotalDepth(state.layers);
+            syncMaxDepthDisplay();
+            renderLayers();
+            scheduleSolve();
+        }
+
+        function renderInputs() {
+            document.getElementById('p-type').value = state.params.type;
+            if(document.getElementById('p-mesh')) document.getElementById('p-mesh').value = state.params.meshSize || 40;
+            document.getElementById('p-q').value = state.params.q;
+            document.getElementById('p-D').value = state.params.D;
+            document.getElementById('p-maxDepth').value = state.params.maxDepth.toFixed(1);
+            document.getElementById('p-isRigid').checked = state.params.isRigid;
+            document.getElementById('p-EA').value = state.params.EA;
+            document.getElementById('p-EI').value = state.params.EI;
+            document.getElementById('p-fixRot').checked = state.params.fixRotation;
+            document.getElementById('p-interA').value = state.params.interfaceA;
+            document.getElementById('val-interA').innerText = state.params.interfaceA.toFixed(2);
+            document.getElementById('p-nRatio').value = state.params.nRatio;
+            document.getElementById('p-applyPi4').checked = state.params.applyPi4;
+            if(document.getElementById('p-useOdemark')) document.getElementById('p-useOdemark').checked = state.params.useOdemark;
+            document.getElementById('val-nRatio').innerText = state.params.nRatio.toFixed(1) + ':1';
+            
+            document.getElementById('p-profMode').value = state.profile.mode;
+            document.getElementById('p-lin-Etop').value = state.profile.ETop / 1000;
+            document.getElementById('p-lin-k').value = state.profile.k / 1000; 
+            document.getElementById('p-lin-freeze').value = state.profile.freezeRatio;
+            document.getElementById('p-lin-nu').value = state.profile.nu;
+            
+            document.getElementById('p-exp-Etop').value = state.profile.ETop / 1000;
+            document.getElementById('p-exp-Eult').value = state.profile.Eult / 1000;
+            document.getElementById('p-exp-a').value = state.profile.a;
+            document.getElementById('p-exp-nu').value = state.profile.nu;
+
+            updateProfileMode(state.profile.mode);
+        }
+
+        function renderLayers() {
+            const maxDepth = getLayersTotalDepth(state.layers) || 1;
+            const svgArea = document.getElementById('profile-area');
+            const listArea = document.getElementById('layers-list');
+            const bgColors = ['bg-[#d4a373]', 'bg-[#faedcd]', 'bg-[#e9edc9]', 'bg-[#ccd5ae]'];
+            
+            let svgHtml = '';
+            let listHtml = '';
+            let zAcc = 0;
+
+            state.layers.forEach((layer, i) => {
+                const zTop = zAcc;
+                const zBot = zAcc + layer.thickness;
+                zAcc = zBot;
+
+                const topPct = (zTop / maxDepth) * 100;
+                const hPct = (layer.thickness / maxDepth) * 100;
+                svgHtml += `
+                    <div class="absolute w-full border-b border-slate-400/50 ${bgColors[i % bgColors.length]}" style="top: ${topPct}%; height: ${hPct}%;">
+                        <span class="absolute bottom-0 right-0.5 text-[8px] text-slate-600 font-bold">${zBot.toFixed(1)}</span>
+                    </div>`;
+                
+                listHtml += `
+                    <div class="p-2 bg-slate-50 border border-slate-200 rounded-lg relative">
+                        ${state.layers.length > 1 ? `<button onclick="removeLayer(${i})" class="absolute top-1.5 right-1.5 text-slate-400 hover:text-red-500"><i class="ph-fill ph-trash"></i></button>` : ''}
+                        <div class="text-xs font-bold text-slate-500 mb-1.5">Στρ. ${i + 1} (${zTop.toFixed(1)} - ${zBot.toFixed(1)}m)</div>
+                        <div class="grid grid-cols-2 gap-1.5 text-sm">
+                            <div><label class="block text-emerald-600 mb-0.5 text-xs font-bold">Πάχος (m)</label><input type="number" step="0.1" min="0.1" value="${layer.thickness}" onchange="updateLayer(${i}, 'thickness', this.value)" class="w-full p-1.5 text-sm border border-emerald-300 bg-emerald-50 rounded font-bold"></div>
+                            <div><label class="block text-slate-500 mb-0.5 text-xs font-bold">E (MPa)</label><input type="number" step="0.1" value="${layer.E / 1000}" onchange="updateLayer(${i}, 'E', this.value)" class="w-full p-1.5 text-sm border rounded font-bold"></div>
+                            <div class="col-span-2"><label class="block text-slate-500 mb-0.5 text-xs font-bold">Poisson (ν)</label><input type="number" step="0.05" value="${layer.nu}" onchange="updateLayer(${i}, 'nu', this.value)" class="w-full p-1.5 text-sm border rounded font-bold"></div>
+                        </div>
+                    </div>`;
+            });
+
+            listHtml += `
+                <button onclick="addLayer()" class="w-full py-2 bg-white text-emerald-700 border border-dashed border-emerald-300 rounded-lg text-sm font-bold hover:bg-emerald-50 transition-colors flex items-center justify-center gap-2">
+                    <i class="ph-bold ph-plus"></i> Προσθήκη Στρώσης
+                </button>`;
+
+            svgArea.innerHTML = svgHtml;
+            listArea.innerHTML = listHtml;
+        }
+
+        function toggleCurve(id) {
+            state.activeCurves[id] = !state.activeCurves[id];
+            renderToggles();
+            renderChart();
+        }
+
+        function renderToggles() {
+            // Rigid-footing correction: shown only for a rigid plate; pi/4 for the circle, f(H/B, v) for the strip
+            const isAxisType = state.params.type === 'axisymmetric';
+            const corrOn = state.params.isRigid && state.params.applyPi4;
+            const corr = getRigidCorrection(state.params, state.profile, state.layers);
+            const corrRow = document.getElementById('rigid-corr-row');
+            if (corrRow) {
+                corrRow.classList.toggle('hidden', !state.params.isRigid);
+                document.getElementById('rigid-corr-label').innerText = isAxisType
+                    ? 'Διόρθωση άκαμπτου × π/4 (Bouss. & n:1)'
+                    : 'Διόρθωση άκαμπτου × f(H/B, ν) (Bouss. & n:1)';
+                let info;
+                if (isAxisType) {
+                    info = 'Κυκλικό: s(άκαμπτο) = (π/4)·s(κέντρο εύκαμπτου) = 0.785·s';
+                } else {
+                    info = `Λωρίδα: s(άκαμπτο) = s(κέντρο εύκαμπτου) − 0.195·q·B·(1−ν²)/E, δηλ. f = ${corr.factor.toFixed(3)} για H/B = ${corr.hb.toFixed(1)}, ν = ${corr.nu.toFixed(2)}`;
+                    if (corr.hb < 2) info += ' — προσεγγιστικό για H < 2B';
+                }
+                document.getElementById('rigid-corr-info').innerText = info;
+            }
+
+            const corrSuffix = corrOn ? (isAxisType ? ' (×π/4)' : ` (×${corr.factor.toFixed(2)})`) : (state.params.isRigid ? ' (Εύκ.)' : '');
+            const odeSuffix = state.params.useOdemark ? ' [MET]' : '';
+            const currentRatio = state.params.nRatio.toFixed(1);
+
+            const curves = [
+                { id: 'fem', color: 'bg-emerald-500', label: 'FEM' },
+                { id: 'bE', color: 'bg-blue-500', label: `Boussinesq${corrSuffix}${odeSuffix}` },
+                { id: 'n1E', color: 'bg-amber-500', label: `${currentRatio}:1${corrSuffix}` }
+            ];
+
+            let html = '';
+            curves.forEach(c => {
+                const active = state.activeCurves[c.id];
+                const bgClass = active ? 'bg-slate-50 border-slate-300 shadow-sm' : 'bg-white border-slate-100 opacity-60 hover:bg-slate-50';
+                const dotClass = active ? 'opacity-100' : 'opacity-40';
+                html += `
+                    <label class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer transition-all ${bgClass}" onclick="toggleCurve('${c.id}')">
+                        <span class="w-3 h-3 rounded-full ${c.color} ${dotClass}"></span>
+                        <span class="text-xs font-bold text-slate-700 select-none">${c.label}</span>
+                    </label>
+                `;
+            });
+            document.getElementById('curves-toggles').innerHTML = html;
+        }
+
+        function updateChartSettings(key, val) {
+            state.chartSettings[key] = val !== '' ? parseFloat(val) : null;
+            renderChart();
+        }
+
+        async function solve() {
+            if(state.isSolving) return;
+            state.isSolving = true;
+            parametricData = null; // Invalidate cache
+            
+            const btn = document.getElementById('btn-solve');
+            btn.classList.remove('bg-amber-500', 'hover:bg-amber-600', 'shadow-amber-200');
+            btn.classList.add('bg-blue-600', 'hover:bg-blue-700', 'shadow-blue-200');
+            btn.innerHTML = '<i class="ph-bold ph-gear animate-spin"></i> Επίλυση...';
+            
+            await new Promise(r => setTimeout(r, 20));
+
+            try {
+                const fem = new GeotechFEM(state.params, state.profile, state.layers);
+                const femRes = fem.solve();
+                const anaRes = calculateAnalytical(state.params, state.profile, state.layers, femRes.depths);
+
+                const E_val_arr = femRes.depths.map(z => getMaterialAt(z, state.params, state.profile, state.layers).E / 1000);
+
+                state.results = femRes.depths.map((z, i) => ({
+                    z, E_val: E_val_arr[i], 
+                    femSet: femRes.femSet[i], femStress: femRes.femStress[i], femStrain: femRes.femStrain[i]*1000,
+                    bE: anaRes.bE[i], n1E: anaRes.n1E[i],
+                    stressB: anaRes.stressB[i], stressN1: anaRes.stressN1[i],
+                    strainB_E: anaRes.strainB_E[i]*1000, strainN1_E: anaRes.strainN1_E[i]*1000
+                }));
+
+                state.heatmapData = {
+                    nodes: fem.nodes, elements: fem.elements, nx: fem.nx,
+                    magU: femRes.magU, epsX: femRes.epsX_arr, epsY: femRes.epsY_arr, gammaXY: femRes.gammaXY_arr, U: femRes.U,
+                    surfaceStress: femRes.surfaceStress,
+                    params: Object.assign({}, state.params)
+                };
+                
+                document.getElementById('btn-heatmap').disabled = false;
+                renderToggles();
+                renderChart();
+                if(!document.getElementById('heatmap-modal').classList.contains('hidden')) drawHeatmap();
+            } catch(e) { console.error(e); showToast("Σφάλμα στην κύρια επίλυση."); }
+
+            state.isSolving = false;
+            document.getElementById('btn-solve').innerHTML = '<i class="ph-fill ph-play"></i> Επίλυση';
+        }
+
+        function getNiceTicks(min, max, maxTicks = 5) {
+            const rng = max - min;
+            if (rng <= 0) return [min];
+            const roughStep = rng / (maxTicks - 1);
+            const mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
+            const normStep = roughStep / mag;
+            let niceStep = normStep < 1.5 ? 1 : normStep < 3 ? 2 : normStep < 7 ? 5 : 10;
+            const step = niceStep * mag;
+            const ticks = [];
+            let tick = Math.ceil(min / step) * step;
+            while (tick <= max + 1e-9) { ticks.push(tick); tick += step; }
+            return ticks;
+        }
+
+        function renderChart() {
+            const container = document.getElementById('charts-wrapper');
+            if (!state.results) return;
+
+            const currentRatio = state.params.nRatio.toFixed(1);
+
+            const charts = [
+                {
+                    id: 'settlement', xLabel: 'Καθίζηση (mm)',
+                    lines: [
+                        { key: 'femSet', color: '#10b981', label: 'FEM', show: state.activeCurves.fem },
+                        { key: 'bE', color: '#3b82f6', label: `Bouss. (E)`, show: state.activeCurves.bE },
+                        { key: 'n1E', color: '#f59e0b', label: `${currentRatio}:1 (E)`, show: state.activeCurves.n1E }
+                    ]
+                },
+                {
+                    id: 'strain', xLabel: 'εy (‰)',
+                    lines: [
+                        { key: 'femStrain', color: '#10b981', label: 'FEM', show: state.activeCurves.fem },
+                        { key: 'strainB_E', color: '#3b82f6', label: `Bouss. (E)`, show: state.activeCurves.bE },
+                        { key: 'strainN1_E', color: '#f59e0b', label: `${currentRatio}:1 (E)`, show: state.activeCurves.n1E }
+                    ]
+                },
+                {
+                    id: 'stress', xLabel: 'Δσz (kPa)',
+                    lines: [
+                        { key: 'femStress', color: '#10b981', label: 'FEM', show: state.activeCurves.fem },
+                        { key: 'stressB', color: '#3b82f6', label: `Boussinesq`, show: state.activeCurves.bE },
+                        { key: 'stressN1', color: '#f59e0b', label: `${currentRatio}:1`, show: state.activeCurves.n1E }
+                    ]
+                },
+                {
+                    id: 'stiffness', xLabel: 'E (MPa)',
+                    lines: [
+                        { key: 'E_val', color: '#8b5cf6', label: 'E(z)', show: true }
+                    ]
+                }
+            ];
+
+            let html = '';
+            let overrideMaxDepth = parseFloat(state.chartSettings.maxDepthView);
+            let overrideMaxSet = parseFloat(state.chartSettings.maxSet);
+            let yMax = (overrideMaxDepth > 0) ? overrideMaxDepth : Math.max(...state.results.map(d=>d.z));
+
+            charts.forEach((chart, idx) => {
+                const activeLines = chart.lines.filter(l => l.show);
+                if(activeLines.length === 0) {
+                    html += `<div class="flex flex-col items-center justify-center text-slate-400 border border-slate-100 rounded-xl bg-slate-50 h-full w-full min-h-0"><i class="ph-fill ph-chart-line-down text-3xl opacity-50"></i></div>`;
+                    return;
+                }
+                
+                let xMax = -Infinity, xMin = Infinity;
+                activeLines.forEach(l => {
+                    const vals = state.results.map(d => d.z <= yMax ? (d[l.key] || 0) : null).filter(v => v !== null);
+                    if (vals.length > 0) {
+                        xMax = Math.max(xMax, ...vals); xMin = Math.min(xMin, ...vals);
+                    }
+                });
+                
+                if (xMax === xMin) { xMax += 1; xMin -= 1; }
+                if (xMin > 0 && chart.id !== 'stiffness') xMin = 0; 
+                if (chart.id === 'stiffness' && xMin > 0) xMin = 0;
+
+                if (chart.id === 'settlement' && overrideMaxSet > 0) {
+                    xMax = overrideMaxSet;
+                    xMin = 0;
+                } else {
+                    const xRange = xMax - xMin;
+                    xMax += xRange * 0.05; xMin -= xRange * 0.05;
+                }
+
+                const width = 400, height = 800, margin = { top: 60, right: 20, bottom: 40, left: 65 };
+                const innerW = width - margin.left - margin.right, innerH = height - margin.top - margin.bottom;
+                
+                const scaleX = v => margin.left + ((v - xMin) / (xMax - xMin)) * innerW;
+                const scaleY = v => margin.top + (v / yMax) * innerH;
+                const xTicks = getNiceTicks(xMin, xMax, 5);
+
+                let svgStr = `<div class="flex flex-col bg-slate-50 border border-slate-200 rounded-xl p-2 shadow-inner relative h-full w-full min-h-0 overflow-hidden">`;
+                svgStr += `<div class="flex-1 relative w-full h-full min-h-0">`;
+                svgStr += `<svg width="100%" height="100%" viewBox="0 0 ${width} ${height}" class="font-sans absolute inset-0">`;
+                
+                if (xMin < 0 && xMax > 0) {
+                    const x0 = scaleX(0);
+                    svgStr += `<line x1="${x0}" y1="${margin.top}" x2="${x0}" y2="${height-margin.bottom}" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,6"/>`;
+                }
+
+                svgStr += `<line x1="${margin.left}" y1="${margin.top}" x2="${width-margin.right}" y2="${margin.top}" stroke="#475569" stroke-width="3"/>`;
+                svgStr += `<line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height-margin.bottom}" stroke="#475569" stroke-width="3"/>`;
+                
+                const yMajorStep = yMax / 5;
+                const yMinorStep = yMajorStep / 5;
+                for(let yVal = 0; yVal <= yMax + 1e-9; yVal += yMinorStep) {
+                    const y = scaleY(yVal);
+                    const isMajor = Math.abs(Math.round(yVal / yMinorStep) % 5) === 0;
+                    if (isMajor) {
+                        svgStr += `<line x1="${margin.left-8}" y1="${y}" x2="${margin.left}" y2="${y}" stroke="#475569" stroke-width="3"/>`;
+                        svgStr += `<text x="${margin.left-12}" y="${y+6}" text-anchor="end" fill="#1e293b" font-weight="bold" font-size="20">${yVal.toFixed(1)}</text>`;
+                    } else {
+                        svgStr += `<line x1="${margin.left-4}" y1="${y}" x2="${margin.left}" y2="${y}" stroke="#94a3b8" stroke-width="1.5"/>`;
+                    }
+                }
+                svgStr += `<text x="${margin.left-45}" y="${margin.top+innerH/2}" transform="rotate(-90, ${margin.left-45}, ${margin.top+innerH/2})" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="22">Βάθος (m)</text>`;
+                
+                const xStep = xTicks.length > 1 ? xTicks[1] - xTicks[0] : 1;
+                const xMinorStep = xStep / 5;
+                const minorStartX = Math.floor(xMin / xMinorStep) * xMinorStep;
+                for(let xVal = minorStartX; xVal <= xMax + 1e-9; xVal += xMinorStep) {
+                    if (xVal < xMin) continue;
+                    const x = scaleX(xVal);
+                    const isMajor = xTicks.some(t => Math.abs(t - xVal) < 1e-5);
+                    if (isMajor) {
+                        svgStr += `<line x1="${x}" y1="${margin.top-8}" x2="${x}" y2="${margin.top}" stroke="#475569" stroke-width="3"/>`;
+                        let textTick = Math.abs(xVal) >= 1000 ? xVal.toExponential(1) : parseFloat(xVal.toFixed(1));
+                        svgStr += `<text x="${x}" y="${margin.top-14}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">${textTick}</text>`;
+                    } else {
+                        svgStr += `<line x1="${x}" y1="${margin.top-4}" x2="${x}" y2="${margin.top}" stroke="#94a3b8" stroke-width="1.5"/>`;
+                    }
+                }
+                svgStr += `<text x="${margin.left+innerW/2}" y="${margin.top-45}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="20">${chart.xLabel}</text>`;
+
+                activeLines.forEach((l, i) => {
+                    const pathD = state.results.filter(d=>d.z<=yMax).map((d, j) => `${j===0?'M':'L'} ${scaleX(d[l.key] || 0)} ${scaleY(d.z)}`).join(' ');
+                    const dash = l.dashed ? 'stroke-dasharray="8,5"' : '';
+                    svgStr += `<path d="${pathD}" fill="none" stroke="${l.color}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" ${dash} opacity="0.9"/>`;
+                });
+
+                let isSettlement = chart.id === 'settlement';
+                let boxH = activeLines.length * 26 + 10;
+                let startY = 18;
+                let boxW = 140;
+                
+                let extraText = [];
+                if (isSettlement) {
+                    const z0 = state.results[0]; 
+                    const rigidState = state.params.isRigid ? 'Άκαμπτη' : 'Εύκαμπτη';
+                    extraText.push(`z=0 (${rigidState}):`);
+                    activeLines.forEach(l => {
+                        let v = z0[l.key] || 0;
+                        let shortName = l.label.split(' ')[0];
+                        extraText.push(`${shortName}: ${v.toFixed(2)} mm`);
+                    });
+                    boxH += extraText.length * 22 + 5;
+                    boxW = 180; 
+                }
+
+                const legendW = boxW;
+                const legendH = boxH;
+                svgStr += `<g transform="translate(${width - margin.right - legendW - 5}, ${height - margin.bottom - legendH - 10})">`;
+                svgStr += `<rect x="0" y="0" width="${legendW}" height="${legendH}" fill="white" fill-opacity="0.9" rx="6" stroke="#cbd5e1" stroke-width="1.5"/>`;
+                
+                if (isSettlement) {
+                    extraText.forEach((txt, i) => {
+                        let fw = i===0 ? 'bold' : 'bold';
+                        let col = i===0 ? '#475569' : '#1e293b';
+                        svgStr += `<text x="10" y="${20 + i*22}" fill="${col}" class="text-[14px]" font-weight="${fw}">${txt}</text>`;
+                    });
+                    startY = 18 + extraText.length * 22 + 5;
+                }
+
+                activeLines.forEach((l, i) => {
+                    const dash = l.dashed ? 'stroke-dasharray="5,3"' : '';
+                    svgStr += `<g transform="translate(10, ${startY + i*26})">
+                        <line x1="0" y1="-5" x2="25" y2="-5" stroke="${l.color}" stroke-width="4" ${dash} />
+                        <text x="32" y="0" fill="#1e293b" class="text-[14px] font-bold">${l.label}</text>
+                    </g>`;
+                });
+                svgStr += `</g>`;
+
+                svgStr += `<rect x="${margin.left}" y="${margin.top}" width="${innerW}" height="${innerH}" fill="transparent" class="plot-area" onmousemove="handleChartHover(event, ${yMax}, '${chart.id}')" onmouseleave="hideChartHover()"/>`;
+
+                svgStr += `</svg></div></div>`;
+                html += svgStr;
+            });
+            container.innerHTML = html;
+        }
+
+        function handleChartHover(e, yMax, chartId) {
+            const rect = e.target.getBoundingClientRect();
+            const yRel = e.clientY - rect.top; 
+            let z = (yRel / rect.height) * yMax;
+            if(z < 0) z = 0; if(z > yMax) z = yMax;
+
+            const cursor = document.getElementById('global-cursor-line');
+            const tt = document.getElementById('global-chart-tooltip');
+            
+            cursor.style.top = (e.clientY + window.scrollY) + 'px';
+            cursor.classList.remove('hidden');
+            
+            let closest = state.results[0];
+            let minDiff = Infinity;
+            for(let r of state.results) {
+                let diff = Math.abs(r.z - z);
+                if(diff < minDiff){ minDiff = diff; closest = r; }
+            }
+            
+            let valHtml = '';
+            const currentRatio = state.params.nRatio.toFixed(1);
+
+            if (chartId === 'settlement') {
+                if(state.activeCurves.fem) valHtml += `<div class="text-[#10b981] font-bold mt-1">FEM: ${closest.femSet.toFixed(2)} mm</div>`;
+                if(state.activeCurves.bE) valHtml += `<div class="text-[#3b82f6] font-bold">Boussinesq: ${closest.bE.toFixed(2)} mm</div>`;
+                if(state.activeCurves.n1E) valHtml += `<div class="text-[#f59e0b] font-bold">${currentRatio}:1: ${closest.n1E.toFixed(2)} mm</div>`;
+            } else if (chartId === 'strain') {
+                if(state.activeCurves.fem) valHtml += `<div class="text-[#10b981] font-bold mt-1">FEM: ${closest.femStrain.toFixed(3)} ‰</div>`;
+                if(state.activeCurves.bE) valHtml += `<div class="text-[#3b82f6] font-bold">Boussinesq: ${closest.strainB_E.toFixed(3)} ‰</div>`;
+                if(state.activeCurves.n1E) valHtml += `<div class="text-[#f59e0b] font-bold">${currentRatio}:1: ${closest.strainN1_E.toFixed(3)} ‰</div>`;
+            } else if (chartId === 'stress') {
+                if(state.activeCurves.fem) valHtml += `<div class="text-[#10b981] font-bold mt-1">FEM: ${closest.femStress.toFixed(1)} kPa</div>`;
+                if(state.activeCurves.bE) valHtml += `<div class="text-[#3b82f6] font-bold">Boussinesq: ${closest.stressB.toFixed(1)} kPa</div>`;
+                if(state.activeCurves.n1E) valHtml += `<div class="text-[#f59e0b] font-bold">${currentRatio}:1: ${closest.stressN1.toFixed(1)} kPa</div>`;
+            } else if (chartId === 'stiffness') {
+                valHtml += `<div class="text-[#8b5cf6] font-bold mt-1">E(z): ${closest.E_val.toFixed(1)} MPa</div>`;
+            }
+            
+            tt.innerHTML = `
+                <div class="font-bold border-b border-slate-500 mb-1 pb-1 text-[15px] text-amber-400">Βάθος z = ${closest.z.toFixed(2)} m</div>
+                ${valHtml}
+            `;
+            
+            tt.style.left = (e.clientX + 20) + 'px';
+            tt.style.top = (e.clientY + window.scrollY + 20) + 'px';
+            tt.classList.remove('hidden');
+        }
+
+        function hideChartHover() {
+            document.getElementById('global-cursor-line').classList.add('hidden');
+            document.getElementById('global-chart-tooltip').classList.add('hidden');
+        }
+
+        function openTableModal() {
+            if (!state.results || state.results.length === 0) return;
+            const columns = [
+                { key: 'E_val', label: 'E (MPa)' },
+                { key: 'femSet', label: 'FEM (mm)', show: state.activeCurves.fem },
+                { key: 'bE', label: 'Bouss. (mm)', show: state.activeCurves.bE },
+                { key: 'n1E', label: 'n:1 (mm)', show: state.activeCurves.n1E },
+                { key: 'femStrain', label: 'FEM εy (‰)', show: state.activeCurves.fem },
+                { key: 'femStress', label: 'FEM Δσz (kPa)', show: state.activeCurves.fem }
+            ];
+
+            let html = `<table class="w-full text-sm text-left"><thead class="text-xs text-slate-700 uppercase bg-slate-100 border-b-2 border-slate-300"><tr><th class="px-4 py-3">Βάθος z (m)</th>`;
+            columns.forEach(col => { if (col.show !== false) html += `<th class="px-4 py-3">${col.label}</th>`; });
+            html += `</tr></thead><tbody>`;
+
+            state.results.forEach((row, i) => {
+                const bg = i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
+                html += `<tr class="${bg} border-b border-slate-200 font-medium"><td class="px-4 py-2 text-slate-800 font-bold">${row.z.toFixed(2)}</td>`;
+                columns.forEach(col => {
+                    if (col.show !== false) {
+                        let val = row[col.key] || 0;
+                        html += `<td class="px-4 py-2">${val.toFixed(3)}</td>`;
+                    }
+                });
+                html += `</tr>`;
+            });
+            html += `</tbody></table>`;
+            
+            document.getElementById('table-modal-content').innerHTML = html;
+            document.getElementById('table-modal').classList.remove('hidden');
+            document.getElementById('table-modal').classList.add('flex');
+        }
+
+        function closeTableModal() {
+            document.getElementById('table-modal').classList.add('hidden');
+            document.getElementById('table-modal').classList.remove('flex');
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast-msg');
+            document.getElementById('toast-text').innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => { toast.classList.add('translate-y-20', 'opacity-0'); }, 3000);
+        }
+
+        function copyTextToClipboard(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.top = "-9999px";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try { document.execCommand('copy'); showToast("Ο πίνακας αντιγράφηκε επιτυχώς!"); } 
+            catch (err) { showToast("Η αντιγραφή απέτυχε."); }
+            document.body.removeChild(textArea);
+        }
+
+        function copyTableToClipboard() {
+            if (!state.results || state.results.length === 0) return;
+            let tsv = "Βάθος z (m)\tE (MPa)\tFEM (mm)\tBouss. (mm)\tn:1 (mm)\tFEM εy (‰)\tFEM Δσz (kPa)\n";
+            state.results.forEach(row => {
+                tsv += `${row.z.toFixed(2)}\t${row.E_val.toFixed(3)}\t${row.femSet.toFixed(3)}\t${row.bE.toFixed(3)}\t${row.n1E.toFixed(3)}\t${row.femStrain.toFixed(3)}\t${row.femStress.toFixed(3)}\n`;
+            });
+            copyTextToClipboard(tsv);
+        }
+
+        function openHeatmap() {
+            document.getElementById('heatmap-modal').classList.remove('hidden');
+            document.getElementById('heatmap-modal').classList.add('flex');
+            syncHmScaleInputs();
+            drawHeatmap();
+        }
+
+        function closeHeatmap() {
+            document.getElementById('heatmap-modal').classList.add('hidden');
+            document.getElementById('heatmap-modal').classList.remove('flex');
+        }
+
+        // Heatmap canvas paddings (px). "band" is the strip above the ground surface that holds the load arrows.
+        const HM_PAD = { L: 50, T: 96, R: 20, B: 30, band: 46 };
+
+        function jetColor(v, vmin, vmax) {
+            let dv = vmax - vmin;
+            if (v < vmin) v = vmin; if (v > vmax) v = vmax;
+            let res = (v - vmin) / (dv === 0 ? 1 : dv), r=0, g=0, b=0;
+            if (res < 0.25) { r=0; g=4*res*255; b=255; }
+            else if (res < 0.5) { r=0; g=255; b=(1-4*(res-0.25))*255; }
+            else if (res < 0.75) { r=4*(res-0.5)*255; g=255; b=0; }
+            else { r=255; g=(1-4*(res-0.75))*255; b=0; }
+            return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+        }
+
+        function changeHmVar(v) { state.hmVar = v; syncHmScaleInputs(); drawHeatmap(); }
+
+        // User-defined colour-scale limits, kept separately per plotted quantity
+        // (the deformed mesh is coloured by |U|, so it shares the |U| limits).
+        function hmScaleKey() { return state.hmVar === 'deformed' ? 'magU' : state.hmVar; }
+
+        function setHmScale(which, valStr) {
+            const k = hmScaleKey();
+            if (!state.hmScale[k]) state.hmScale[k] = { min: null, max: null };
+            const v = parseFloat(valStr);
+            state.hmScale[k][which] = (valStr === '' || isNaN(v)) ? null : v;
+            drawHeatmap();
+        }
+
+        function resetHmScale() {
+            delete state.hmScale[hmScaleKey()];
+            syncHmScaleInputs();
+            drawHeatmap();
+        }
+
+        function syncHmScaleInputs() {
+            const s = state.hmScale[hmScaleKey()] || { min: null, max: null };
+            document.getElementById('hm-scale-min').value = s.min === null ? '' : s.min;
+            document.getElementById('hm-scale-max').value = s.max === null ? '' : s.max;
+        }
+
+        function toggleHmZoom() {
+            state.hmZoomLevel = (state.hmZoomLevel + 1) % 3;
+            const btnText = document.getElementById('hm-zoom-text');
+            const icon = document.querySelector('#hm-zoom-btn i');
+            if(state.hmZoomLevel === 0) {
+                btnText.innerText = "Εστίαση (Zoom)";
+                icon.className = "ph-bold ph-magnifying-glass-plus text-blue-600 text-lg";
+            } else if(state.hmZoomLevel === 1) {
+                btnText.innerText = "Εστίαση x2";
+                icon.className = "ph-bold ph-magnifying-glass-plus text-blue-600 text-lg";
+            } else {
+                btnText.innerText = "Επαναφορά Προβολής";
+                icon.className = "ph-bold ph-magnifying-glass-minus text-red-500 text-lg";
+            }
+            drawHeatmap();
+        }
+
+        function drawHeatmap() {
+            if(!state.heatmapData) return;
+            const data = state.heatmapData;
+            const canvas = document.getElementById('heatmap-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            const W = Math.max(...data.nodes.map(n => n.x));
+            const H = Math.max(...data.nodes.map(n => n.y));
+            
+            let zFactor = state.hmZoomLevel === 2 ? 1.5 : (state.hmZoomLevel === 1 ? 3.5 : 100);
+            const zW = Math.min(W, data.params.D * zFactor);
+            const zH = Math.min(H, data.params.D * zFactor);
+
+            const padL = HM_PAD.L, padT = HM_PAD.T, padR = HM_PAD.R, padB = HM_PAD.B;
+            const drawW = canvas.width - padL - padR, drawH = canvas.height - padT - padB;
+            const scaleX = drawW / zW, scaleY = drawH / zH;
+
+            let valsArray = [];
+            if (state.hmVar === 'magU' || state.hmVar === 'deformed') valsArray = data.magU;
+            else if (state.hmVar === 'epsY') valsArray = Array.from(data.epsY).map(v => v * 1000);
+            else if (state.hmVar === 'epsX') valsArray = Array.from(data.epsX).map(v => v * 1000);
+            else if (state.hmVar === 'gammaXY') valsArray = Array.from(data.gammaXY).map(v => v * 1000);
+
+            let minVal = Math.min(...valsArray);
+            let maxVal = Math.max(...valsArray);
+            if (state.hmVar === 'magU' || state.hmVar === 'deformed') minVal = 0; 
+            if (maxVal === minVal) maxVal += 0.0001;
+
+            let unit = (state.hmVar === 'magU' || state.hmVar === 'deformed') ? 'mm' : '‰';
+
+            // Colour-scale limits: the user's values where given, otherwise the automatic ones
+            const autoMin = minVal, autoMax = maxVal;
+            const userScale = state.hmScale[hmScaleKey()];
+            let scaleNote = '';
+            if (userScale) {
+                if (userScale.min !== null) minVal = userScale.min;
+                if (userScale.max !== null) maxVal = userScale.max;
+                if (maxVal <= minVal) {
+                    minVal = autoMin; maxVal = autoMax;
+                    scaleNote = 'Το Max πρέπει να είναι μεγαλύτερο από το Min· χρησιμοποιείται η αυτόματη κλίμακα.';
+                } else if (userScale.min !== null || userScale.max !== null) {
+                    scaleNote = 'Τιμές έξω από τα όρια παίρνουν το ακραίο χρώμα (μπλε ή κόκκινο).';
+                }
+            }
+            document.getElementById('hm-scale-min').placeholder = autoMin.toFixed(2);
+            document.getElementById('hm-scale-max').placeholder = autoMax.toFixed(2);
+            document.getElementById('hm-scale-unit').innerText = unit;
+            document.getElementById('hm-scale-note').innerText = scaleNote;
+
+            document.getElementById('heatmap-min-label').innerText = (autoMin < minVal - 1e-9 ? '≤ ' : '') + minVal.toFixed(2) + " " + unit;
+            document.getElementById('heatmap-mid-label').innerText = ((minVal + maxVal) / 2).toFixed(2) + " " + unit;
+            document.getElementById('heatmap-max-label').innerText = (autoMax > maxVal + 1e-9 ? '≥ ' : '') + maxVal.toFixed(2) + " " + unit;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(padL, padT, drawW, drawH);
+            ctx.clip();
+
+            let defScale = 0;
+            let maxDisplacementM = Math.max(...data.magU) / 1000;
+            defScale = state.hmDefScale * ((0.05 * zW) / (maxDisplacementM || 1));
+
+            data.elements.forEach((el, i) => {
+                const n0 = data.nodes[el.nodes[0]], n1 = data.nodes[el.nodes[1]], n2 = data.nodes[el.nodes[2]], n3 = data.nodes[el.nodes[3]];
+                if (Math.min(n0.x, n1.x) > zW || Math.min(n0.y, n3.y) > zH) return;
+
+                let val = (state.hmVar === 'magU' || state.hmVar === 'deformed') ? 
+                    (data.magU[el.nodes[0]] + data.magU[el.nodes[1]] + data.magU[el.nodes[2]] + data.magU[el.nodes[3]]) / 4 : 
+                    valsArray[i]; 
+
+                ctx.fillStyle = jetColor(val, minVal, maxVal);
+                ctx.beginPath();
+                
+                if (state.hmVar === 'deformed') {
+                    let u0x = data.U[el.nodes[0]*4] * defScale, u0y = data.U[el.nodes[0]*4+1] * defScale;
+                    let u1x = data.U[el.nodes[1]*4] * defScale, u1y = data.U[el.nodes[1]*4+1] * defScale;
+                    let u2x = data.U[el.nodes[2]*4] * defScale, u2y = data.U[el.nodes[2]*4+1] * defScale;
+                    let u3x = data.U[el.nodes[3]*4] * defScale, u3y = data.U[el.nodes[3]*4+1] * defScale;
+                    ctx.moveTo(padL + (n0.x + u0x)*scaleX, padT + (n0.y + u0y)*scaleY);
+                    ctx.lineTo(padL + (n1.x + u1x)*scaleX, padT + (n1.y + u1y)*scaleY);
+                    ctx.lineTo(padL + (n2.x + u2x)*scaleX, padT + (n2.y + u2y)*scaleY);
+                    ctx.lineTo(padL + (n3.x + u3x)*scaleX, padT + (n3.y + u3y)*scaleY);
+                } else {
+                    ctx.moveTo(padL + n0.x*scaleX, padT + n0.y*scaleY);
+                    ctx.lineTo(padL + n1.x*scaleX, padT + n1.y*scaleY);
+                    ctx.lineTo(padL + n2.x*scaleX, padT + n2.y*scaleY);
+                    ctx.lineTo(padL + n3.x*scaleX, padT + n3.y*scaleY);
+                }
+                
+                ctx.closePath();
+                ctx.fill();
+
+                if (state.hmShowMesh) {
+                    let hex = state.hmMeshColor.replace('#', '');
+                    let r = parseInt(hex.substring(0,2), 16), g = parseInt(hex.substring(2,4), 16), b = parseInt(hex.substring(4,6), 16);
+                    ctx.strokeStyle = `rgba(${r},${g},${b},${state.hmMeshAlpha})`;
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
+                }
+            });
+
+            if (data.params.isRigid) {
+                ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 5; ctx.lineCap = "round";
+                ctx.beginPath(); 
+                let firstNode = true;
+                for(let i=0; i<=data.nx; i++) {
+                    let n = data.nodes[i];
+                    if (n.x > (data.params.D/2) + 1e-4) break;
+                    let dx = 0, dy = 0;
+                    if (state.hmVar === 'deformed') {
+                        dx = data.U[i*4 + 2] * defScale;
+                        dy = data.U[i*4 + 1] * defScale;
+                    }
+                    let px = padL + (n.x + dx)*scaleX;
+                    let py = padT + (n.y + dy)*scaleY;
+                    if (firstNode) { ctx.moveTo(px, py); firstNode = false; }
+                    else ctx.lineTo(px, py);
+                }
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            ctx.strokeStyle = '#475569'; ctx.fillStyle = '#475569'; ctx.lineWidth = 1;
+            // The x ruler sits above the band that holds the load arrows
+            const rulerY = padT - HM_PAD.band;
+            ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+            ctx.beginPath(); ctx.moveTo(padL, rulerY); ctx.lineTo(padL+drawW, rulerY); ctx.stroke();
+            getNiceTicks(0, zW, 8).forEach(x => {
+                if(x>zW) return;
+                const px = padL + x*scaleX;
+                ctx.beginPath(); ctx.moveTo(px, rulerY-5); ctx.lineTo(px, rulerY); ctx.stroke();
+                ctx.fillText(x.toFixed(1), px, rulerY-8);
+            });
+            ctx.textAlign = "right";
+            ctx.fillText("r/x (m)", padL+drawW, rulerY-26);
+
+            if (state.hmShowLoad) drawHeatmapLoad(ctx, data, { padL, padT, scaleX, scaleY, zW, defScale });
+            ctx.strokeStyle = '#475569'; ctx.fillStyle = '#475569'; ctx.lineWidth = 1; ctx.font = "bold 13px sans-serif";
+            ctx.textAlign = "right"; ctx.textBaseline = "middle";
+            ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+drawH); ctx.stroke();
+            getNiceTicks(0, zH, 6).forEach(y => {
+                if(y>zH) return;
+                const py = padT + y*scaleY;
+                ctx.beginPath(); ctx.moveTo(padL-5, py); ctx.lineTo(padL, py); ctx.stroke();
+                ctx.fillText(y.toFixed(1), padL-10, py);
+            });
+            ctx.textAlign = "left";
+            ctx.fillText("z (m)", padL-40, padT+drawH+20);
+        }
+
+        // Load arrows on the footing. Each arrow tip sits on the loaded surface; in the
+        // "deformed mesh" view the tips (and the bar joining the tails) move with the
+        // surface, using the same displacement scale as the mesh.
+        function drawHeatmapLoad(ctx, data, g) {
+            const R = data.params.D / 2;
+            const xEnd = Math.min(R, g.zW);
+            const widthPx = xEnd * g.scaleX;
+            if (widthPx < 6) return;
+            const deformed = state.hmVar === 'deformed';
+            const hDof = data.params.isRigid ? 2 : 0;   // rigid plate: its own horizontal dof
+            const surf = (x) => {
+                if (!deformed) return { dx: 0, dy: 0 };
+                let i = 0;
+                while (i < data.nx - 1 && data.nodes[i + 1].x < x) i++;
+                const a = data.nodes[i], b = data.nodes[i + 1];
+                const t = b.x > a.x ? Math.min(1, Math.max(0, (x - a.x) / (b.x - a.x))) : 0;
+                const ux = data.U[i * 4 + hDof] + t * (data.U[(i + 1) * 4 + hDof] - data.U[i * 4 + hDof]);
+                const uy = data.U[i * 4 + 1] + t * (data.U[(i + 1) * 4 + 1] - data.U[i * 4 + 1]);
+                return { dx: ux * g.defScale, dy: uy * g.defScale };
+            };
+            const n = Math.max(3, Math.min(13, Math.round(widthPx / 22) + 1));
+            const len = HM_PAD.band - 12, head = 6, gap = data.params.isRigid ? 5 : 2;
+            const pts = [];
+            for (let k = 0; k < n; k++) {
+                const x = xEnd * k / (n - 1);
+                const d = surf(x);
+                pts.push({ x: g.padL + (x + d.dx) * g.scaleX, y: g.padT + d.dy * g.scaleY - gap });
+            }
+            ctx.save();
+            ctx.strokeStyle = '#dc2626'; ctx.fillStyle = '#dc2626'; ctx.lineWidth = 1.5; ctx.lineCap = 'butt';
+            ctx.beginPath();
+            pts.forEach((p, k) => { if (k === 0) ctx.moveTo(p.x, p.y - len); else ctx.lineTo(p.x, p.y - len); });
+            ctx.stroke();
+            pts.forEach(p => {
+                ctx.beginPath(); ctx.moveTo(p.x, p.y - len); ctx.lineTo(p.x, p.y - head); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - 3.5, p.y - head - 1); ctx.lineTo(p.x + 3.5, p.y - head - 1); ctx.closePath(); ctx.fill();
+            });
+            const last = pts[pts.length - 1];
+            ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText('q = ' + data.params.q + ' kPa', last.x + 8, last.y - len + 1);
+            ctx.restore();
+        }
+
+        function handleHeatmapHover(e) {
+            const canvas = e.target;
+            const rect = canvas.getBoundingClientRect();
+            const logW = canvas.width, logH = canvas.height;
+            const sX = logW / rect.width, sY = logH / rect.height;
+            const px = (e.clientX - rect.left) * sX, py = (e.clientY - rect.top) * sY;
+            
+            const data = state.heatmapData;
+            const W = Math.max(...data.nodes.map(n=>n.x)), H = Math.max(...data.nodes.map(n=>n.y));
+            let zFactor = state.hmZoomLevel === 2 ? 1.5 : (state.hmZoomLevel === 1 ? 3.5 : 100);
+            const zW = Math.min(W, data.params.D * zFactor);
+            const zH = Math.min(H, data.params.D * zFactor);
+
+            const padL = HM_PAD.L, padT = HM_PAD.T, padR = HM_PAD.R, padB = HM_PAD.B;
+            const pX = ((px - padL) / (logW - padL - padR)) * zW;
+            const pY = ((py - padT) / (logH - padT - padB)) * zH;
+            
+            const tt = document.getElementById('heatmap-tooltip');
+            if (pX < 0 || pX > zW || pY < 0 || pY > zH) { tt.style.display = 'none'; return; }
+
+            let nVal = 0;
+            if (state.hmVar === 'magU' || state.hmVar === 'deformed') {
+                let minD = Infinity;
+                for (let i=0; i<data.nodes.length; i++) {
+                    const dx = data.nodes[i].x - pX, dy = data.nodes[i].y - pY;
+                    const d = dx*dx + dy*dy;
+                    if (d < minD) { minD = d; nVal = data.magU[i]; }
+                }
+            } else {
+                let foundEl = -1;
+                for (let i=0; i<data.elements.length; i++) {
+                    let el = data.elements[i];
+                    let n0 = data.nodes[el.nodes[0]], n2 = data.nodes[el.nodes[2]];
+                    let minX = Math.min(n0.x, n2.x), maxX = Math.max(n0.x, n2.x);
+                    let minY = Math.min(n0.y, n2.y), maxY = Math.max(n0.y, n2.y);
+                    if (pX >= minX && pX <= maxX && pY >= minY && pY <= maxY) { foundEl = i; break; }
+                }
+                if (foundEl !== -1) {
+                    if (state.hmVar === 'epsY') nVal = data.epsY[foundEl] * 1000;
+                    else if (state.hmVar === 'epsX') nVal = data.epsX[foundEl] * 1000;
+                    else if (state.hmVar === 'gammaXY') nVal = data.gammaXY[foundEl] * 1000;
+                }
+            }
+
+            const cRect = canvas.parentElement.getBoundingClientRect();
+            tt.style.left = (e.clientX - cRect.left + 15) + 'px';
+            tt.style.top = (e.clientY - cRect.top + 15) + 'px';
+            tt.style.display = 'block';
+            let unit = (state.hmVar === 'magU' || state.hmVar === 'deformed') ? 'mm' : '‰';
+            document.getElementById('tt-val').innerText = nVal.toFixed(3) + ' ' + unit;
+            document.getElementById('tt-r').innerText = 'r/x: ' + pX.toFixed(2) + ' m';
+            document.getElementById('tt-z').innerText = 'z: ' + pY.toFixed(2) + ' m';
+            
+            let extraInfo = '';
+            if (pY < (zH * 0.1)) { 
+                let closestNode = -1;
+                let minDiff = Infinity;
+                for(let i=0; i<=data.nx; i++) {
+                    let diff = Math.abs(data.nodes[i].x - pX);
+                    if (diff < minDiff) { minDiff = diff; closestNode = i; }
+                }
+                if (closestNode >= 0 && closestNode < data.nx && minDiff < (zW * 0.05)) {
+                    let sStress = data.surfaceStress[closestNode];
+                    if (sStress !== undefined && isFinite(sStress) && !isNaN(sStress)) {
+                        extraInfo = `<div class="text-amber-400 mt-1 pt-1 border-t border-slate-600">Τάση Επαφής p: ${Math.abs(sStress).toFixed(1)} kPa</div>`;
+                    }
+                }
+            }
+            document.getElementById('tt-p').innerHTML = extraInfo;
+        }
+
+        function openContactStressModal() {
+            if (!state.heatmapData) return;
+            
+            document.getElementById('contact-stress-modal').classList.remove('hidden');
+            document.getElementById('contact-stress-modal').classList.add('flex');
+            
+            const data = state.heatmapData;
+            const loadR = data.params.D / 2;
+            let maxS = 0;
+            let pts = [];
+            
+            for(let i=0; i<data.nx; i++) {
+                let el = data.elements[i];
+                let cx = (data.nodes[el.nodes[0]].x + data.nodes[el.nodes[1]].x)/2;
+                
+                if (cx <= loadR * 1.5) {
+                    let s = Math.abs(data.surfaceStress[i]); 
+                    
+                    if (typeof s === 'number' && isFinite(s) && !isNaN(s)) {
+                        pts.push({ r: cx, p: s });
+                        maxS = Math.max(maxS, s);
+                    }
+                }
+            }
+
+            const chartContainer = document.getElementById('contact-stress-chart');
+            
+            if (pts.length === 0) {
+                chartContainer.innerHTML = `<div class="flex items-center justify-center w-full h-full text-slate-500 text-lg font-bold p-10"><i class="ph-bold ph-warning-circle text-2xl mr-2"></i> Δεν βρέθηκαν έγκυρα δεδομένα τάσεων για σχεδίαση.</div>`;
+                return;
+            }
+            if (maxS < 1) maxS = 1;
+
+            const width = 800, height = 400, margin = { top: 40, right: 30, bottom: 50, left: 60 };
+            const innerW = width - margin.left - margin.right, innerH = height - margin.top - margin.bottom;
+            
+            let xMax = loadR * 1.5;
+            let yMax = maxS * 1.1;
+
+            const scaleX = v => margin.left + (v / xMax) * innerW;
+            const scaleY = v => margin.top + innerH - (v / yMax) * innerH;
+
+            let svgStr = `<svg width="100%" height="100%" viewBox="0 0 ${width} ${height}" class="font-sans absolute inset-0">`;
+            
+            svgStr += `<line x1="${margin.left}" y1="${margin.top+innerH}" x2="${width-margin.right}" y2="${margin.top+innerH}" stroke="#475569" stroke-width="2.5"/>`;
+            svgStr += `<line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top+innerH}" stroke="#475569" stroke-width="2.5"/>`;
+            
+            getNiceTicks(0, yMax, 5).forEach(yVal => {
+                if(yVal > yMax) return;
+                const y = scaleY(yVal);
+                svgStr += `<line x1="${margin.left-8}" y1="${y}" x2="${margin.left}" y2="${y}" stroke="#475569" stroke-width="2.5"/>`;
+                svgStr += `<line x1="${margin.left}" y1="${y}" x2="${width-margin.right}" y2="${y}" stroke="#cbd5e1" stroke-dasharray="4,4" stroke-width="1"/>`;
+                svgStr += `<text x="${margin.left-12}" y="${y+5}" text-anchor="end" fill="#1e293b" font-weight="bold" font-size="16">${yVal.toFixed(0)}</text>`;
+            });
+            svgStr += `<text x="${margin.left-40}" y="${margin.top+innerH/2}" transform="rotate(-90, ${margin.left-40}, ${margin.top+innerH/2})" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">Τάση Επαφής p (kPa)</text>`;
+
+            getNiceTicks(0, xMax, 5).forEach(xVal => {
+                if(xVal > xMax) return;
+                const x = scaleX(xVal);
+                svgStr += `<line x1="${x}" y1="${margin.top+innerH}" x2="${x}" y2="${margin.top+innerH+8}" stroke="#475569" stroke-width="2.5"/>`;
+                svgStr += `<text x="${x}" y="${margin.top+innerH+25}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="16">${xVal.toFixed(2)}</text>`;
+            });
+            svgStr += `<text x="${margin.left+innerW/2}" y="${margin.top+innerH+45}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">Ακτίνα r (m)</text>`;
+
+            let pathD = pts.map((d, i) => `${i===0?'M':'L'} ${scaleX(d.r)} ${scaleY(d.p)}`).join(' ');
+            let areaD = pathD + ` L ${scaleX(pts[pts.length-1].r)} ${scaleY(0)} L ${scaleX(pts[0].r)} ${scaleY(0)} Z`;
+            
+            svgStr += `<path d="${areaD}" fill="rgba(250, 204, 21, 0.3)"/>`;
+            svgStr += `<path d="${pathD}" fill="none" stroke="#ca8a04" stroke-width="4" stroke-linejoin="round"/>`;
+
+            const xEdge = scaleX(loadR);
+            svgStr += `<line x1="${xEdge}" y1="${margin.top}" x2="${xEdge}" y2="${margin.top+innerH}" stroke="#ef4444" stroke-dasharray="6,6" stroke-width="2"/>`;
+            svgStr += `<text x="${xEdge+5}" y="${margin.top+20}" fill="#ef4444" font-weight="bold" font-size="14">Άκρο Πλάκας (R=${loadR}m)</text>`;
+
+            svgStr += `</svg>`;
+            chartContainer.innerHTML = `<div class="relative w-full h-full">${svgStr}</div>`;
+        }
+
+        function closeContactStressModal() {
+            document.getElementById('contact-stress-modal').classList.add('hidden');
+            document.getElementById('contact-stress-modal').classList.remove('flex');
+        }
+
+        async function runParametricAnalysis() {
+            if (parametricData && parametricData.length > 0) {
+                document.getElementById('parametric-modal').classList.remove('hidden');
+                document.getElementById('parametric-modal').classList.add('flex');
+                drawParametricChart();
+                return;
+            }
+
+            const btn = document.querySelector('button[onclick="runParametricAnalysis()"]');
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<i class="ph-bold ph-gear animate-spin"></i> Υπολογισμός...';
+            btn.disabled = true;
+            
+            await new Promise(r => setTimeout(r, 50));
+
+            try {
+                const testDiams = [0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0];
+                const originalParams = Object.assign({}, state.params);
+                
+                parametricData = [];
+
+                const isLayered = state.profile.mode === 'layered';
+                const fixedLayeredDepth = isLayered ? getLayersTotalDepth(state.layers) : null;
+
+                for (const d of testDiams) {
+                    const tempParams = Object.assign({}, originalParams, { D: d });
+                    // Custom/layered profile: same fixed final depth for every diameter.
+                    // Otherwise: depth scales with D as before (6D axisymmetric / 12D plane-strain).
+                    tempParams.maxDepth = isLayered ? fixedLayeredDepth : (tempParams.type === 'axisymmetric' ? 6 * d : 12 * d);
+                    const tempLayers = state.layers; 
+
+                    const fem = new GeotechFEM(tempParams, state.profile, tempLayers);
+                    const femRes = fem.solve();
+                    const anaRes = calculateAnalytical(tempParams, state.profile, tempLayers, femRes.depths);
+
+                    let fSet = femRes.femSet[0];
+                    let bE_val = anaRes.bE[0];
+                    let n1E_val = anaRes.n1E[0];
+
+                    parametricData.push({
+                        D: d,
+                        femSet: (typeof fSet === 'number' && isFinite(fSet) && !isNaN(fSet)) ? fSet : null,
+                        bE: (typeof bE_val === 'number' && isFinite(bE_val) && !isNaN(bE_val)) ? bE_val : null,
+                        n1E: (typeof n1E_val === 'number' && isFinite(n1E_val) && !isNaN(n1E_val)) ? n1E_val : null
+                    });
+                }
+
+                document.getElementById('parametric-modal').classList.remove('hidden');
+                document.getElementById('parametric-modal').classList.add('flex');
+                drawParametricChart();
+
+            } catch(e) {
+                console.error("Σφάλμα στην Παραμετρική Ανάλυση:", e);
+                showToast("Υπήρξε σφάλμα κατά την παραμετρική ανάλυση.");
+            } finally {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
+        }
+
+        // Footing size label: diameter for the circle, width for the strip
+        function sizeAxisLabel() {
+            return state.params.type === 'axisymmetric' ? 'Διάμετρος D (m)' : 'Πλάτος B (m)';
+        }
+
+        function drawParametricChart() {
+            if(!parametricData || parametricData.length === 0) return;
+            const container = document.getElementById('parametric-chart-container');
+            const profileContainer = document.getElementById('parametric-profile-container');
+            
+            // --- 1. Main Parametric Chart ---
+            const width = 800, height = 600, margin = { top: 70, right: 40, bottom: 40, left: 70 };
+            const innerW = width - margin.left - margin.right, innerH = height - margin.top - margin.bottom;
+
+            let maxValsArr = parametricData.map(d => {
+                let v1 = d.femSet !== null ? d.femSet : 0;
+                let v2 = d.bE !== null ? d.bE : 0;
+                let v3 = d.n1E !== null ? d.n1E : 0;
+                return Math.max(v1, v2, v3);
+            });
+            let xMax = Math.max(...maxValsArr) * 1.1;
+            if (!isFinite(xMax) || xMax <= 0 || isNaN(xMax)) xMax = 10;
+            
+            let yMax = 6.5; 
+
+            const scaleX = v => margin.left + (v / xMax) * innerW;
+            const scaleY = v => margin.top + (v / yMax) * innerH;
+
+            let svgStr = `<svg width="100%" height="100%" viewBox="0 0 ${width} ${height}" class="font-sans absolute inset-0">`;
+            
+            svgStr += `<line x1="${margin.left}" y1="${margin.top}" x2="${width-margin.right}" y2="${margin.top}" stroke="#475569" stroke-width="2.5"/>`;
+            getNiceTicks(0, xMax, 6).forEach(xVal => {
+                if(xVal > xMax) return;
+                const x = scaleX(xVal);
+                svgStr += `<line x1="${x}" y1="${margin.top-8}" x2="${x}" y2="${margin.top}" stroke="#475569" stroke-width="2.5"/>`;
+                svgStr += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top+innerH}" stroke="#cbd5e1" stroke-dasharray="4,4" stroke-width="1"/>`;
+                svgStr += `<text x="${x}" y="${margin.top-15}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="16">${xVal.toFixed(1)}</text>`;
+            });
+            svgStr += `<text x="${margin.left+innerW/2}" y="${margin.top-45}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">Καθίζηση (mm)</text>`;
+
+            svgStr += `<line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top+innerH}" stroke="#475569" stroke-width="2.5"/>`;
+            getNiceTicks(0, yMax, 6).forEach(yVal => {
+                if(yVal > yMax) return;
+                const y = scaleY(yVal);
+                svgStr += `<line x1="${margin.left-8}" y1="${y}" x2="${margin.left}" y2="${y}" stroke="#475569" stroke-width="2.5"/>`;
+                svgStr += `<line x1="${margin.left}" y1="${y}" x2="${width-margin.right}" y2="${y}" stroke="#cbd5e1" stroke-dasharray="4,4" stroke-width="1"/>`;
+                svgStr += `<text x="${margin.left-12}" y="${y+6}" text-anchor="end" fill="#1e293b" font-weight="bold" font-size="16">${yVal.toFixed(1)}</text>`;
+            });
+            svgStr += `<text x="${margin.left-50}" y="${margin.top+innerH/2}" transform="rotate(-90, ${margin.left-50}, ${margin.top+innerH/2})" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">${sizeAxisLabel()}</text>`;
+
+            const lines = [
+                { key: 'femSet', color: '#10b981', label: 'FEM' },
+                { key: 'bE', color: '#3b82f6', label: 'Boussinesq (E)' },
+                { key: 'n1E', color: '#f59e0b', label: `Μέθοδος ${state.params.nRatio.toFixed(1)}:1` }
+            ];
+
+            lines.forEach(l => {
+                let validData = parametricData.filter(d => d[l.key] !== null);
+                if (validData.length > 0) {
+                    const pathD = validData.map((d, i) => `${i===0?'M':'L'} ${scaleX(d[l.key])} ${scaleY(d.D)}`).join(' ');
+                    svgStr += `<path d="${pathD}" fill="none" stroke="${l.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+                    validData.forEach(d => {
+                        svgStr += `<circle cx="${scaleX(d[l.key])}" cy="${scaleY(d.D)}" r="5" fill="white" stroke="${l.color}" stroke-width="3"/>`;
+                    });
+                }
+            });
+
+            const legendW = 160;
+            const legendH = lines.length * 24 + 10;
+            svgStr += `<g transform="translate(${width - margin.right - legendW - 10}, ${margin.top + 10})">`;
+            svgStr += `<rect x="0" y="0" width="${legendW}" height="${legendH}" fill="white" fill-opacity="0.95" rx="6" stroke="#cbd5e1" stroke-width="1.5"/>`;
+            lines.forEach((l, i) => {
+                svgStr += `<g transform="translate(10, ${16 + i*24})">
+                    <line x1="0" y1="4" x2="25" y2="4" stroke="${l.color}" stroke-width="4" />
+                    <text x="35" y="10" fill="#1e293b" class="text-[14px] font-bold">${l.label}</text>
+                </g>`;
+            });
+            svgStr += `</g></svg>`;
+
+            container.innerHTML = `<div class="bg-slate-50 border border-slate-200 rounded-xl p-2 shadow-inner relative w-full h-full">${svgStr}</div>`;
+
+            // --- 2. Profile E(z) Chart ---
+            const pWidth = 400, pHeight = 600, pMargin = { top: 70, right: 20, bottom: 40, left: 60 };
+            const pInnerW = pWidth - pMargin.left - pMargin.right, pInnerH = pHeight - pMargin.top - pMargin.bottom;
+
+            let maxD = Math.max(...parametricData.map(d=>d.D));
+            let maxZ = state.profile.mode === 'layered'
+                ? getLayersTotalDepth(state.layers)
+                : (state.params.type === 'axisymmetric' ? 6 : 12) * maxD;
+            if(maxZ < 1) maxZ = 1;
+
+            let pts = [];
+            for(let z=0; z<=maxZ; z+=maxZ/100) {
+                pts.push({z, E: getMaterialAt(z, state.params, state.profile, state.layers).E / 1000});
+            }
+            pts.push({z: maxZ, E: getMaterialAt(maxZ, state.params, state.profile, state.layers).E / 1000});
+
+            let eMax = Math.max(...pts.map(p=>p.E)) * 1.1;
+            if(!isFinite(eMax) || eMax <= 0 || isNaN(eMax)) eMax = 50;
+
+            const pScaleX = v => pMargin.left + (v / eMax) * pInnerW;
+            const pScaleY = v => pMargin.top + (v / maxZ) * pInnerH;
+
+            let pSvg = `<svg width="100%" height="100%" viewBox="0 0 ${pWidth} ${pHeight}" class="font-sans absolute inset-0">`;
+
+            pSvg += `<line x1="${pMargin.left}" y1="${pMargin.top}" x2="${pWidth-pMargin.right}" y2="${pMargin.top}" stroke="#475569" stroke-width="2.5"/>`;
+            pSvg += `<line x1="${pMargin.left}" y1="${pMargin.top}" x2="${pMargin.left}" y2="${pHeight-pMargin.bottom}" stroke="#475569" stroke-width="2.5"/>`;
+            
+            getNiceTicks(0, eMax, 4).forEach(xVal => {
+                if(xVal > eMax) return;
+                const x = pScaleX(xVal);
+                pSvg += `<line x1="${x}" y1="${pMargin.top-8}" x2="${x}" y2="${pMargin.top}" stroke="#475569" stroke-width="2.5"/>`;
+                pSvg += `<line x1="${x}" y1="${pMargin.top}" x2="${x}" y2="${pHeight-pMargin.bottom}" stroke="#cbd5e1" stroke-dasharray="4,4" stroke-width="1"/>`;
+                pSvg += `<text x="${x}" y="${pMargin.top-15}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="16">${xVal.toFixed(0)}</text>`;
+            });
+            pSvg += `<text x="${pMargin.left+pInnerW/2}" y="${pMargin.top-45}" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">E (MPa)</text>`;
+
+            getNiceTicks(0, maxZ, 6).forEach(yVal => {
+                if(yVal > maxZ) return;
+                const y = pScaleY(yVal);
+                pSvg += `<line x1="${pMargin.left-8}" y1="${y}" x2="${pMargin.left}" y2="${y}" stroke="#475569" stroke-width="2.5"/>`;
+                pSvg += `<line x1="${pMargin.left}" y1="${y}" x2="${pWidth-pMargin.right}" y2="${y}" stroke="#cbd5e1" stroke-dasharray="4,4" stroke-width="1"/>`;
+                pSvg += `<text x="${pMargin.left-12}" y="${y+6}" text-anchor="end" fill="#1e293b" font-weight="bold" font-size="16">${yVal.toFixed(1)}</text>`;
+            });
+            pSvg += `<text x="${pMargin.left-45}" y="${pMargin.top+pInnerH/2}" transform="rotate(-90, ${pMargin.left-45}, ${pMargin.top+pInnerH/2})" text-anchor="middle" fill="#1e293b" font-weight="bold" font-size="18">Βάθος z (m)</text>`;
+
+            let pathD = pts.map((p, i) => `${i===0?'M':'L'} ${pScaleX(p.E)} ${pScaleY(p.z)}`).join(' ');
+            pSvg += `<path d="${pathD}" fill="none" stroke="#8b5cf6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+            const rigidityLabel = state.params.isRigid ? "Άκαμπτο Πέδιλο" : "Εύκαμπτο Πέδιλο";
+            const rigidityColor = state.params.isRigid ? "#ef4444" : "#3b82f6";
+            
+            pSvg += `<g transform="translate(${pMargin.left + pInnerW/2}, ${pHeight - pMargin.bottom + 25})">
+                        <rect x="-80" y="-15" width="160" height="30" fill="${rigidityColor}" fill-opacity="0.1" rx="15" stroke="${rigidityColor}" stroke-width="2"/>
+                        <text x="0" y="5" text-anchor="middle" fill="${rigidityColor}" font-weight="bold" font-size="16">${rigidityLabel}</text>
+                     </g>`;
+
+            pSvg += `</svg>`;
+            profileContainer.innerHTML = `<div class="bg-slate-50 border border-slate-200 rounded-xl p-2 shadow-inner relative w-full h-full">${pSvg}</div>`;
+        }
+
+        function copyParametricTable() {
+            if(!parametricData) return;
+            let currentRatio = state.params.nRatio.toFixed(1);
+            let tsv = `${sizeAxisLabel()}\tFEM (mm)\tBoussinesq (E) (mm)\t${currentRatio}:1 (E) (mm)\n`;
+            parametricData.forEach(d => {
+                let fVal = d.femSet !== null ? d.femSet.toFixed(3) : "Σφάλμα";
+                let bVal = d.bE !== null ? d.bE.toFixed(3) : "Σφάλμα";
+                let nVal = d.n1E !== null ? d.n1E.toFixed(3) : "Σφάλμα";
+                tsv += `${d.D.toFixed(2)}\t${fVal}\t${bVal}\t${nVal}\n`;
+            });
+            copyTextToClipboard(tsv);
+        }
+
+        function closeParametricModal() {
+            document.getElementById('parametric-modal').classList.add('hidden');
+            document.getElementById('parametric-modal').classList.remove('flex');
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>

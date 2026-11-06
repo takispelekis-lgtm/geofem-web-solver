@@ -1,0 +1,8 @@
+# Ο φάκελος περιέχει και άλλα αρχεία εργασίας. Στο αποθετήριο ανεβαίνουν μόνο όσα ορίζονται εδώ.
+/*
+!/.gitignore
+!/.nojekyll
+!/README.md
+!/index.html
+!/geofem_web_solver.html
+!/GeoFEM Web Solver - Εγχειρίδιο χρήσης και θεωρία.pdf
