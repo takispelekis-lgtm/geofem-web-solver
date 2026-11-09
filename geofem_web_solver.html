@@ -316,6 +316,9 @@
                 </div>
             </div>
 
+            <!-- FEM: αποτελέσματα σε σημεία της επιφάνειας -->
+            <div id="surface-points" class="flex-shrink-0 bg-white px-3 py-2 rounded-2xl shadow-sm border border-slate-200 hidden"></div>
+
             <!-- 4 CHARTS GRID -->
             <div class="flex-1 bg-white p-3 rounded-2xl shadow-sm border border-slate-200 flex flex-col min-h-0 relative">
                 <!-- ALL 4 CHARTS IN ONE ROW (grid-cols-4) taking full height (h-full) -->
@@ -780,9 +783,30 @@
                     gammaXY_arr[i] = (nodalGammaXY[el.nodes[0]]+nodalGammaXY[el.nodes[1]]+nodalGammaXY[el.nodes[2]]+nodalGammaXY[el.nodes[3]])/4;
                 }
 
-                return { 
-                    depths, femSet, femStress, femStrain, 
-                    U, magU, epsX_arr, epsY_arr, gammaXY_arr, surfaceStress, nx: this.nx
+                // Επιφανειακά σημεία ελέγχου: κέντρο, άκρη και B/4, B/2, B έξω από την άκρη.
+                // Η μετακίνηση του Q4 είναι γραμμική κατά μήκος της πλευράς, άρα η τιμή μεταξύ δύο κόμβων είναι η ίδια η λύση FEM.
+                const B = this.params.D, Redge = B / 2;
+                const surfacePoints = [
+                    { id: 'center', off: null, x: 0 },
+                    { id: 'edge', off: 0, x: Redge },
+                    { id: 'q', off: 0.25, x: Redge + B / 4 },
+                    { id: 'h', off: 0.5, x: Redge + B / 2 },
+                    { id: 'b', off: 1, x: Redge + B }
+                ].map(p => {
+                    let i = 0;
+                    while (i < this.nx - 1 && this.nodes[i + 1].x < p.x - 1e-9) i++;
+                    const xa = this.nodes[i].x, xb = this.nodes[i + 1].x;
+                    const w = Math.min(1, Math.max(0, (p.x - xa) / (xb - xa)));
+                    return {
+                        id: p.id, off: p.off, x: p.x,
+                        set: ((1 - w) * U[i*4 + 1] + w * U[(i+1)*4 + 1]) * 1000,
+                        ux: ((1 - w) * U[i*4] + w * U[(i+1)*4]) * 1000
+                    };
+                });
+
+                return {
+                    depths, femSet, femStress, femStrain,
+                    U, magU, epsX_arr, epsY_arr, gammaXY_arr, surfaceStress, surfacePoints, nx: this.nx
                 };
             }
         }
@@ -896,6 +920,7 @@
             profile: { mode: 'linear_freeze', ETop: 10000, k: 500, freezeRatio: 2.0, Eult: 50000, a: 0.5, nu: 0.3 },
             layers: [],
             results: null,
+            surfacePoints: null,
             heatmapData: null,
             activeCurves: { fem: true, bE: true, n1E: true },
             hmVar: 'magU',
@@ -1218,6 +1243,8 @@
                     strainB_E: anaRes.strainB_E[i]*1000, strainN1_E: anaRes.strainN1_E[i]*1000
                 }));
 
+                state.surfacePoints = femRes.surfacePoints;
+
                 state.heatmapData = {
                     nodes: fem.nodes, elements: fem.elements, nx: fem.nx,
                     magU: femRes.magU, epsX: femRes.epsX_arr, epsY: femRes.epsY_arr, gammaXY: femRes.gammaXY_arr, U: femRes.U,
@@ -1228,11 +1255,44 @@
                 document.getElementById('btn-heatmap').disabled = false;
                 renderToggles();
                 renderChart();
+                renderSurfacePoints();
                 if(!document.getElementById('heatmap-modal').classList.contains('hidden')) drawHeatmap();
             } catch(e) { console.error(e); showToast("Σφάλμα στην κύρια επίλυση."); }
 
             state.isSolving = false;
             document.getElementById('btn-solve').innerHTML = '<i class="ph-fill ph-play"></i> Επίλυση';
+        }
+
+        function surfacePointLabel(p) {
+            const s = state.params.type === 'axisymmetric' ? 'D' : 'B';
+            if (p.id === 'center') return 'Κέντρο';
+            if (p.id === 'edge') return 'Άκρη';
+            return 'Άκρη + ' + (p.off === 1 ? s : s + '/' + Math.round(1 / p.off));
+        }
+
+        function surfacePointRatio(p) {
+            const s0 = state.surfacePoints[0].set;
+            return Math.abs(s0) > 1e-12 ? 100 * p.set / s0 : 0;
+        }
+
+        function renderSurfacePoints() {
+            const box = document.getElementById('surface-points');
+            if (!box) return;
+            if (!state.surfacePoints) { box.classList.add('hidden'); return; }
+            let html = '<div class="flex flex-wrap items-stretch gap-2">';
+            html += '<div class="flex items-center pr-1" title="Καθίζηση της επιφάνειας από το FEM. Το ποσοστό είναι ως προς την καθίζηση στο κέντρο.">' +
+                    '<span class="text-xs font-black text-slate-700 uppercase tracking-wide leading-tight"><i class="ph-fill ph-map-pin text-emerald-500 mr-1 text-base align-middle"></i>FEM · Επιφάνεια z = 0</span></div>';
+            state.surfacePoints.forEach(p => {
+                const tip = 'x = ' + p.x.toFixed(3) + ' m | καθίζηση ' + p.set.toFixed(3) + ' mm | οριζόντια μετακίνηση u_x = ' + (Math.abs(p.ux) < 5e-4 ? 0 : p.ux).toFixed(3) + ' mm (+ προς τα έξω)';
+                html += '<div class="flex-1 min-w-[128px] bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 leading-tight" title="' + tip + '">' +
+                        '<div class="flex items-baseline justify-between gap-2"><span class="text-xs font-bold text-slate-600 whitespace-nowrap">' + surfacePointLabel(p) + '</span>' +
+                        '<span class="text-[11px] text-slate-400 whitespace-nowrap">x = ' + p.x.toFixed(2) + ' m</span></div>' +
+                        '<div class="flex items-baseline justify-between gap-2"><span class="text-[15px] font-black text-emerald-600 whitespace-nowrap">' + p.set.toFixed(2) + ' mm</span>' +
+                        '<span class="text-[11px] font-bold text-slate-500">' + surfacePointRatio(p).toFixed(0) + '%</span></div></div>';
+            });
+            html += '</div>';
+            box.innerHTML = html;
+            box.classList.remove('hidden');
         }
 
         function getNiceTicks(min, max, maxTicks = 5) {
@@ -1490,7 +1550,17 @@
                 { key: 'femStress', label: 'FEM Δσz (kPa)', show: state.activeCurves.fem }
             ];
 
-            let html = `<table class="w-full text-sm text-left"><thead class="text-xs text-slate-700 uppercase bg-slate-100 border-b-2 border-slate-300"><tr><th class="px-4 py-3">Βάθος z (m)</th>`;
+            let html = '';
+            if (state.surfacePoints) {
+                html += '<div class="px-4 pt-3 pb-1 text-xs font-black text-slate-700 uppercase tracking-wide">FEM · Σημεία επιφάνειας (z = 0)</div>';
+                html += '<table class="w-full text-sm text-left mb-4"><thead class="text-xs text-slate-700 uppercase bg-emerald-50 border-b-2 border-emerald-200"><tr><th class="px-4 py-2">Σημείο</th><th class="px-4 py-2">x (m)</th><th class="px-4 py-2">Καθίζηση (mm)</th><th class="px-4 py-2">% του κέντρου</th><th class="px-4 py-2">u_x (mm)</th></tr></thead><tbody>';
+                state.surfacePoints.forEach(p => {
+                    html += '<tr class="bg-white border-b border-slate-200 font-medium"><td class="px-4 py-2 text-slate-800 font-bold">' + surfacePointLabel(p) + '</td><td class="px-4 py-2">' + p.x.toFixed(3) + '</td><td class="px-4 py-2">' + p.set.toFixed(3) + '</td><td class="px-4 py-2">' + surfacePointRatio(p).toFixed(1) + '</td><td class="px-4 py-2">' + (Math.abs(p.ux) < 5e-4 ? 0 : p.ux).toFixed(3) + '</td></tr>';
+                });
+                html += '</tbody></table>';
+                html += '<div class="px-4 pb-1 text-xs font-black text-slate-700 uppercase tracking-wide">Άξονας (x = 0) · Κατανομή με το βάθος</div>';
+            }
+            html += `<table class="w-full text-sm text-left"><thead class="text-xs text-slate-700 uppercase bg-slate-100 border-b-2 border-slate-300"><tr><th class="px-4 py-3">Βάθος z (m)</th>`;
             columns.forEach(col => { if (col.show !== false) html += `<th class="px-4 py-3">${col.label}</th>`; });
             html += `</tr></thead><tbody>`;
 
@@ -1544,6 +1614,12 @@
             state.results.forEach(row => {
                 tsv += `${row.z.toFixed(2)}\t${row.E_val.toFixed(3)}\t${row.femSet.toFixed(3)}\t${row.bE.toFixed(3)}\t${row.n1E.toFixed(3)}\t${row.femStrain.toFixed(3)}\t${row.femStress.toFixed(3)}\n`;
             });
+            if (state.surfacePoints) {
+                tsv += "\nFEM - Σημεία επιφάνειας (z = 0)\nΣημείο\tx (m)\tΚαθίζηση (mm)\t% του κέντρου\tu_x (mm)\n";
+                state.surfacePoints.forEach(p => {
+                    tsv += surfacePointLabel(p) + "\t" + p.x.toFixed(3) + "\t" + p.set.toFixed(3) + "\t" + surfacePointRatio(p).toFixed(1) + "\t" + (Math.abs(p.ux) < 5e-4 ? 0 : p.ux).toFixed(3) + "\n";
+                });
+            }
             copyTextToClipboard(tsv);
         }
 
