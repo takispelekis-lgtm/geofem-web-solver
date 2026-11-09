@@ -6,7 +6,7 @@
 
 **Εφαρμογή:** https://takispelekis-lgtm.github.io/geofem-web-solver/
 
-**Εγχειρίδιο:** [GeoFEM Web Solver - Εγχειρίδιο χρήσης και θεωρία (PDF)](2026_11_09_geofem_web_solver%20-%20Εγχειρίδιο%20χρήσης%20και%20θεωρία.pdf)
+**Εγχειρίδιο:** [GeoFEM Web Solver - Εγχειρίδιο χρήσης και θεωρία (PDF)](2026_11_09_geofem_web_solver%20-%20Εγχειρίδιο%20χρήσης%20και%20θεωρία.pdf) · [Word](2026_11_09_geofem_web_solver%20-%20Εγχειρίδιο%20χρήσης%20και%20θεωρία.docx)
 
 ## Τι υπολογίζει
 
